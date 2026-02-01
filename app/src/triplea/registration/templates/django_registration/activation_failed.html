@@ -1,0 +1,25 @@
+<h1>We were unable to activate your account</h1>
+
+{% if activation_error.code == "expired" %}
+<p>
+Oops! The link you have followed has expired. Please sign up again and follow the new activation link.
+</p>
+{% endif %}
+
+{% if activation_error.code == "invalid_key" %}
+<p>
+Oops! The link you have followed is invalid. Please sign up again and follow the new activation link.
+</p>
+{% endif %}
+
+{% if activation_error.code == "already_activated" %}
+<p>
+The account has already been activated.
+</p>
+{% endif %}
+
+{% if activation_error.code == "bad_username" %}
+<p>
+Oops! We are unable to find the account you're attempting to activate.
+</p>
+{% endif %}

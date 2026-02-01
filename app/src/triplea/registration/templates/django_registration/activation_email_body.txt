@@ -1,0 +1,9 @@
+Hi {{ user.username }}
+
+Thank you for signing up at {{site.name }}!
+
+Please your activate your account to continue:
+{{scheme }}://{{ site }}{% url "django_registration_activate" activation_key %}
+
+Regards
+The {{ site.name }} team

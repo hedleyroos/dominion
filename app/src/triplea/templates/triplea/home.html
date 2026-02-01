@@ -1,0 +1,8 @@
+{% if user.is_authenticated %}
+    <form action="{% url "logout" %}" method="post">
+        {% csrf_token %}
+        <input type="submit" value="Sign out">
+    </form>
+{% else %}
+    <a href="{% url "login" %}">Sign in</a> or <a href="{% url "django_registration_register" %}">create</a> an account.
+{% endif %}

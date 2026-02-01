@@ -1,0 +1,13 @@
+<h1>Sign in</h1>
+
+<form method="POST" action=".">
+    {% csrf_token %}
+    <table>
+        {{ form.as_table }}
+    </table>
+    <input type="submit" value="Sign in" />
+</form>
+
+Don't have an account yet? <a href="{% url "django_registration_register" %}">Create</a> an account.
+<br />
+Forgot your password? <a href="{% url "password_reset" %}">Reset</a> your password.

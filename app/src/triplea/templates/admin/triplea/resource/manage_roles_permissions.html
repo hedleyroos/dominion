@@ -1,0 +1,59 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+
+<h1>Roles and permissions mapping for {{ object }}</h1>
+
+<p>
+You may adjust the roles and permissions mapping for every resource. <i>Inherit</i> means
+that the roles for a particular permission are inherited from the resource's ancestors and also
+its domain ancestors.
+Unticking <i>Inherit</i> means this resource is responsible for the roles for
+a particular permission. Child resources inherit their roles and permissions mapping
+from this resource by default.
+</p>
+
+<p>
+It is normal for <i>Inherit</i> to be ticked and the boxes to the right to not be ticked.
+Ticking these boxes augments the inherited permissions.
+</p>
+
+<form method="POST" action=".">
+{% csrf_token %}
+<table>
+{% for row in mapping %}
+    {% if forloop.first %}
+        {% for item in row %}
+            {% if forloop.first %}
+                <th></th><th>Inherit?</th>
+            {% else %}
+                <th>{{ item.role }}</th>
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+    <tr>
+    {% for item in row %}
+        {% if forloop.first %}
+            <td>{{ item }}</td>
+            <td>
+                <input type="checkbox"
+                       value="1" 
+                       name="permission_{{ item.id }}_inherit"
+                       {% if item.inherit %}checked="1"{% endif %}" />
+            </td>
+        {% else %}
+            <td>
+                <input type="checkbox" 
+                       value="1" 
+                       name="role_{{ item.role.id }}_permission_{{ item.permission.id }}_active"
+                       {% if item.active %}checked="1"{% endif %}" />
+            </td>
+        {% endif %}
+    {% endfor %}
+    </tr>
+{% endfor %}
+</table>
+<br />
+<input type="submit" value="Save" />
+</form>
+
+{% endblock %}
