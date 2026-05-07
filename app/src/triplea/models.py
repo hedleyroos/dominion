@@ -1,11 +1,12 @@
 import uuid
-from random import randint
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models.signals import post_save
+from django.db.models import F
+from django.db.models.signals import post_delete, post_save
+from django.dispatch import receiver
 
 from triplea.utils import user_has_permission_for_domain
 
@@ -82,6 +83,12 @@ class Domain(models.Model):
     # Computed fields
     root = models.ForeignKey("Domain", null=True, blank=True, editable=False, on_delete=models.PROTECT, related_name="domain_root")
 
+    # Counter caches — maintained via post_save / post_delete signals.
+    # descendant_count: total domains that share this domain as their root (including self).
+    # resource_count: total resources whose domain FK points to this domain.
+    descendant_count = models.PositiveIntegerField(default=0, editable=False)
+    resource_count = models.PositiveIntegerField(default=0, editable=False)
+
     objects = DomainManager()
 
     def __str__(self):
@@ -105,11 +112,14 @@ class Domain(models.Model):
                     raise ValidationError({"title": "The title is already in use by an ancestor."})
                 parent = parent.parent
 
-        # Limit until we are sure we can scale well. The check itself introduces latency,
-        # so only check occasionally since going slightly over the limit is not a problem.
-        limit = settings.TRIPLEA_MAX_DESCENDANT_DOMAINS
-        if randint(1, max(1, int(limit/10))) == 1:
-            if Domain.objects.filter(root=self.root).count() > limit:
+        # Check the descendant counter on the root domain.  The counter is incremented
+        # by the post_save signal before full_clean() runs, so a fresh DB read reflects
+        # the just-inserted row.  Skip this check on unsaved (in-memory) objects where
+        # root_id has not been set yet.
+        if self.root_id is not None:
+            limit = settings.TRIPLEA_MAX_DESCENDANT_DOMAINS
+            root_count = Domain.objects.values_list("descendant_count", flat=True).get(id=self.root_id)
+            if root_count > limit:
                 raise ValidationError("The root domain may not contain more than %s child domains." % limit)
 
         # TODO: limit number of root domains owned by the same user. Hard because we don't store a single
@@ -189,12 +199,13 @@ class Resource(models.Model):
             if self.parent.domain != self.domain:
                 raise ValidationError("Parent domain does not match instance domain.")
 
-        # Limit until we are sure we can scale well. The check itself introduces latency,
-        # so only check occasionally since going slightly over the limit is not a problem.
+        # Check the resource counter on the owning domain.  The counter is incremented
+        # by the post_save signal before clean() runs, so a fresh DB read reflects
+        # the just-inserted row.
         limit = settings.TRIPLEA_MAX_RESOURCES_PER_DOMAIN
-        if randint(1, max(1, int(limit/1000))) == 1:
-            if Resource.objects.filter(domain=self.domain).count() > limit:
-                raise ValidationError("The domain may not contain more than %s resources." % limit)
+        resource_count = Domain.objects.values_list("resource_count", flat=True).get(id=self.domain_id)
+        if resource_count > limit:
+            raise ValidationError("The domain may not contain more than %s resources." % limit)
 
 
 class DomainRolePermission(models.Model):
@@ -291,3 +302,47 @@ class UserResourceRole(models.Model):
 
     def __str__(self):
         return "%s:%s:%s" % (self.user, self.resource, self.role)
+
+
+# ---------------------------------------------------------------------------
+# Counter-cache signals (P3.3)
+# ---------------------------------------------------------------------------
+# These signals maintain the `descendant_count` and `resource_count` fields on
+# Domain atomically via F() expressions.  The signals fire *inside*
+# Model.save() (before full_clean/clean run), so the counters are already
+# updated when the limit check in clean() reads them.
+
+@receiver(post_save, sender=Domain)
+def _domain_post_save(sender, instance, created, **kwargs):
+    if created:
+        # Increment the root's descendant count.  When this IS the root domain
+        # (root_id == id) the UPDATE targets the just-inserted row, setting
+        # it from 0 → 1 correctly.
+        Domain.objects.filter(id=instance.root_id).update(
+            descendant_count=F("descendant_count") + 1
+        )
+
+
+@receiver(post_delete, sender=Domain)
+def _domain_post_delete(sender, instance, **kwargs):
+    # Decrement the root's counter.  If the root itself was deleted the UPDATE
+    # targets a row that no longer exists and is a safe no-op.
+    if instance.root_id and instance.root_id != instance.id:
+        Domain.objects.filter(id=instance.root_id).update(
+            descendant_count=F("descendant_count") - 1
+        )
+
+
+@receiver(post_save, sender=Resource)
+def _resource_post_save(sender, instance, created, **kwargs):
+    if created:
+        Domain.objects.filter(id=instance.domain_id).update(
+            resource_count=F("resource_count") + 1
+        )
+
+
+@receiver(post_delete, sender=Resource)
+def _resource_post_delete(sender, instance, **kwargs):
+    Domain.objects.filter(id=instance.domain_id).update(
+        resource_count=F("resource_count") - 1
+    )

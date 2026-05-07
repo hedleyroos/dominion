@@ -31,7 +31,7 @@ class ViewsTestCase(TestCase):
 
         # Check mail, extract activation key and POST to activate
         obj = EmailMessage.objects.all().last()
-        body = obj.unpickled.body
+        body = obj.body
         key = re.search(r"activation_key=([^\s'\"]+)", body).group(1)
         activate_url = reverse("django_registration_activate")
         response = self.client.post(activate_url, {"activation_key": key}, follow=True)

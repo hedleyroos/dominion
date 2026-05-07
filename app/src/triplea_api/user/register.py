@@ -6,9 +6,13 @@ from django.http import HttpRequest
 from django_registration.backends.activation.views import RegistrationView
 
 from triplea.serializers import UserSerializer
+from triplea_api.utils import check_rate_limit
 
 
 async def post(body, **kwargs):
+    if await check_rate_limit("user_register", "5/h"):
+        return {"message": "Too many requests."}, 429
+
     User = get_user_model()
     body["is_active"] = False
 

@@ -1,4 +1,3 @@
-from asgiref.sync import async_to_sync
 from django.views.generic.edit import UpdateView
 
 from triplea import admin_forms
@@ -13,7 +12,7 @@ class DomainManageRolesPermissionsView(UpdateView):
 
     def get_context_data(self, **kwargs):
         di = super().get_context_data()
-        di["mapping"] = async_to_sync(utils.domain_roles_permissions_mapping)(self.object)
+        di["mapping"] = utils.domain_roles_permissions_mapping_sync(self.object)
         return di
 
     def get_success_url(self):
@@ -28,7 +27,7 @@ class ResourceManageRolesPermissionsView(UpdateView):
 
     def get_context_data(self, **kwargs):
         di = super().get_context_data()
-        di["mapping"] = async_to_sync(utils.resource_roles_permissions_mapping)(self.object)
+        di["mapping"] = utils.resource_roles_permissions_mapping_sync(self.object)
         return di
 
     def get_success_url(self):

@@ -3,12 +3,18 @@ from triplea import models
 from triplea.utils import (
     domain_has_permission_for_role,
     domain_roles_permissions_mapping,
+    domain_roles_permissions_mapping_sync,
     get_domain_permissions,
     get_domain_roles,
     get_resource_permissions,
     get_resource_roles,
     get_user_domains,
+    get_user_domains_sync,
+    invalidate_rules_permissions,
+    invalidate_user_permissions,
     resource_roles_permissions_mapping,
+    resource_roles_permissions_mapping_sync,
+    user_has_permission_for_domain,
     user_has_role_for_domain,
 )
 
@@ -193,3 +199,66 @@ class ResourceRolesPermissionsMappingTestCase(BaseTestCase):
         mapping = await resource_roles_permissions_mapping(resource)
         for row in mapping:
             self.assertIsInstance(row[0], models.Permission)
+
+
+class CrossRequestCacheTestCase(BaseTestCase):
+    """P3.1 — cross-request permission cache: results are stored and invalidated correctly."""
+
+    async def test_permission_result_is_cached_across_calls(self):
+        # Warm the cache then call again; both should return the same value.
+        result1 = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        result2 = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        self.assertEqual(result1, result2)
+        self.assertTrue(result1)
+
+    async def test_invalidate_user_permissions_does_not_break_result(self):
+        await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        await invalidate_user_permissions(str(self.owner.id))
+        result = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        self.assertTrue(result)
+
+    async def test_invalidate_rules_permissions_does_not_break_result(self):
+        await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        await invalidate_rules_permissions()
+        result = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        self.assertTrue(result)
+
+
+class SyncUtilVariantsTestCase(BaseTestCase):
+    """P3.5 — synchronous utility variants match the async equivalents."""
+
+    def test_get_user_domains_sync_returns_owner_domains(self):
+        domains = get_user_domains_sync(self.owner)
+        domain_ids = [d.id for d in domains]
+        self.assertIn(self.domaina.id, domain_ids)
+
+    def test_get_user_domains_sync_includes_descendants(self):
+        domains = get_user_domains_sync(self.owner)
+        domain_ids = [d.id for d in domains]
+        self.assertIn(self.domainaa.id, domain_ids)
+
+    def test_get_user_domains_sync_empty_for_no_roles(self):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        new_user = User.objects.create(username="sync_test_user")
+        domains = get_user_domains_sync(new_user)
+        self.assertEqual(domains.count(), 0)
+
+    def test_domain_roles_permissions_mapping_sync_returns_list(self):
+        mapping = domain_roles_permissions_mapping_sync(self.domaina)
+        self.assertIsInstance(mapping, list)
+        self.assertGreater(len(mapping), 0)
+
+    def test_domain_roles_permissions_mapping_sync_structure(self):
+        mapping = domain_roles_permissions_mapping_sync(self.domaina)
+        for row in mapping:
+            self.assertIsInstance(row[0], models.Permission)
+            for cell in row[1:]:
+                self.assertIn("active", cell)
+                self.assertIn("role", cell)
+
+    def test_resource_roles_permissions_mapping_sync_returns_list(self):
+        resource = models.Resource.objects.select_related("domain").get(id=self.domaina_resourcea.id)
+        mapping = resource_roles_permissions_mapping_sync(resource)
+        self.assertIsInstance(mapping, list)
+

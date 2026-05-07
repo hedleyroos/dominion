@@ -16,11 +16,12 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, re_path, include
 
-from triplea.views import AuthorizationView
+from triplea.views import AuthorizationView, HealthView
 
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("healthz", HealthView.as_view(), name="health"),
 
     # Declare our own authorization view
     # TODO: should be in tripla.urls because leaky abstraction. Order of url patterns

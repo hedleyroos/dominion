@@ -1,6 +1,61 @@
+import contextvars
+import secrets
+
 from asgiref.sync import sync_to_async
+from django.core.cache import cache as django_cache
 
 from triplea import models
+
+# Cross-request permission cache TTL (seconds).
+_PERM_CACHE_TTL = 300
+
+# Cache key for the global "rules version" — bumped on any DomainRolePermission /
+# ResourceRolePermission mutation so all cached permission results are immediately stale.
+_RULES_VER_KEY = "triplea:rv"
+
+
+def _user_ver_key(user_id: str) -> str:
+    return f"triplea:uv:{user_id}"
+
+
+async def _get_or_create_version(key: str) -> str:
+    """Return the version token for *key*, creating one if absent.
+
+    The result is stored in the request-scoped cache so subsequent calls within
+    the same request skip the Django cache round-trip.
+    """
+    request_cache = _cache()
+    if key in request_cache:
+        return request_cache[key]
+    version = await django_cache.aget(key)
+    if version is None:
+        version = secrets.token_hex(4)
+        await django_cache.aset(key, version, _PERM_CACHE_TTL * 2)
+    request_cache[key] = version
+    return version
+
+
+async def _cross_request_key(kind: str, user_id, perm_code: str, object_id) -> str:
+    """Build a versioned Django cache key for a permission result."""
+    rules_ver = await _get_or_create_version(_RULES_VER_KEY)
+    user_ver = await _get_or_create_version(_user_ver_key(str(user_id)))
+    return f"triplea:p:{rules_ver}:{user_ver}:{kind}:{user_id}:{perm_code}:{object_id}"
+
+
+async def invalidate_user_permissions(user_id: str) -> None:
+    """Invalidate all cross-request permission cache entries for *user_id*.
+
+    Call this after any UserDomainRole or UserResourceRole mutation.
+    """
+    await django_cache.adelete(_user_ver_key(user_id))
+
+
+async def invalidate_rules_permissions() -> None:
+    """Invalidate all cross-request permission cache entries for all users.
+
+    Call this after any DomainRolePermission or ResourceRolePermission mutation.
+    """
+    await django_cache.adelete(_RULES_VER_KEY)
 
 
 # The queries are complex because the role and permission mappings on domain and resources are sparse to avoid
@@ -8,20 +63,52 @@ from triplea import models
 # domains live within domains. This module therefore has a lot of recursive functions.
 
 
+# Request-scoped permission cache. Each ASGI request gets its own context copy so there is no
+# cross-request leakage. The cache eliminates redundant DB round-trips when the same domain/resource
+# tree is traversed multiple times within a single request (e.g. checking several permissions).
+_request_cache: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_request_cache", default=None)
+
+
+def _cache() -> dict:
+    cache = _request_cache.get()
+    if cache is None:
+        cache = {}
+        _request_cache.set(cache)
+    return cache
+
+
 async def user_has_role_for_domain(user_id, role_code, domain_id):
+    cache = _cache()
+    key = ("uhr_domain", user_id, role_code, domain_id)
+    if key in cache:
+        return cache[key]
+
     if await models.UserDomainRole.objects.filter(user__id=user_id, role__code=role_code, domain__id=domain_id).aexists():
+        cache[key] = True
         return True
 
-    domain = await models.Domain.objects.aget(id=domain_id)
-    if domain.parent_id:
-        return await user_has_role_for_domain(user_id, role_code, domain.parent_id)
+    domain_key = ("domain", domain_id)
+    if domain_key not in cache:
+        cache[domain_key] = await models.Domain.objects.aget(id=domain_id)
+    domain = cache[domain_key]
 
+    if domain.parent_id:
+        result = await user_has_role_for_domain(user_id, role_code, domain.parent_id)
+        cache[key] = result
+        return result
+
+    cache[key] = False
     return False
 
 
 async def domain_has_permission_for_role(domain_id, permission_code, role_code):
+    cache = _cache()
+    key = ("dhp_role", domain_id, permission_code, role_code)
+    if key in cache:
+        return cache[key]
 
     if await models.DomainRolePermission.objects.filter(domain__id=domain_id, role__code=role_code, permission__code=permission_code).aexists():
+        cache[key] = True
         return True
 
     # Check acquisition. Only if an item exists and specifically opts out of inherit
@@ -30,12 +117,22 @@ async def domain_has_permission_for_role(domain_id, permission_code, role_code):
         domain__id=domain_id, permission__code=permission_code, inherit=False
     ).aexists()
     if cannot_inherit:
+        cache[key] = False
         return False
 
     # We can inherit. Traverse upwards.
-    domain = await models.Domain.objects.aget(id=domain_id)
+    domain_key = ("domain", domain_id)
+    if domain_key not in cache:
+        cache[domain_key] = await models.Domain.objects.aget(id=domain_id)
+    domain = cache[domain_key]
+
     if domain.parent_id:
-        return await domain_has_permission_for_role(domain.parent_id, permission_code, role_code)
+        result = await domain_has_permission_for_role(domain.parent_id, permission_code, role_code)
+        cache[key] = result
+        return result
+
+    cache[key] = False
+    return False
 
 
 async def _user_has_permission_for_domain(user_id, permission_code, domain_id, domain_ids):
@@ -60,16 +157,35 @@ async def _user_has_permission_for_domain(user_id, permission_code, domain_id, d
         return False
 
     # We can inherit. Traverse upwards.
-    domain = await models.Domain.objects.select_related("parent").aget(id=domain_id)
+    cache = _cache()
+    domain_key = ("domain", domain_id)
+    if domain_key not in cache:
+        cache[domain_key] = await models.Domain.objects.select_related("parent").aget(id=domain_id)
+    domain = cache[domain_key]
+
     if domain.parent_id is not None:
-        return await _user_has_permission_for_domain(user_id, permission_code, domain.parent_id, domain_ids+[domain.parent_id])
+        return await _user_has_permission_for_domain(user_id, permission_code, domain.parent_id, domain_ids | {domain.parent_id})
 
     return False
 
 
 async def user_has_permission_for_domain(user_id, permission_code, domain_id):
-    domain_ids = [domain_id]
-    return await _user_has_permission_for_domain(user_id, permission_code, domain_id, domain_ids)
+    request_cache = _cache()
+    request_key = ("uhp_domain", user_id, permission_code, domain_id)
+    if request_key in request_cache:
+        return request_cache[request_key]
+
+    # Check cross-request (Django) cache before hitting the database.
+    cross_key = await _cross_request_key("d", user_id, permission_code, domain_id)
+    cached = await django_cache.aget(cross_key)
+    if cached is not None:
+        request_cache[request_key] = cached
+        return cached
+
+    result = await _user_has_permission_for_domain(user_id, permission_code, domain_id, {domain_id})
+    request_cache[request_key] = result
+    await django_cache.aset(cross_key, result, _PERM_CACHE_TTL)
+    return result
 
 
 async def _user_has_permission_for_resource(user_id, permission_code, resource_id, resource_ids):
@@ -101,7 +217,7 @@ async def _user_has_permission_for_resource(user_id, permission_code, resource_i
     # determines whether we have permission or not.
     resource = await models.Resource.objects.select_related("domain").aget(id=resource_id)
     if resource.parent_id is not None:
-        return await _user_has_permission_for_resource(user_id, permission_code, resource.parent_id, resource_ids+[resource.parent_id])
+        return await _user_has_permission_for_resource(user_id, permission_code, resource.parent_id, resource_ids | {resource.parent_id})
     else:
         # This is the most difficult part because we transition from traversing upward over resources
         # to traversing upward over domains.
@@ -128,8 +244,22 @@ async def _user_has_permission_for_resource(user_id, permission_code, resource_i
 
 
 async def user_has_permission_for_resource(user_id, permission_code, resource_id):
-    resource_ids = [resource_id]
-    return await _user_has_permission_for_resource(user_id, permission_code, resource_id, resource_ids)
+    request_cache = _cache()
+    request_key = ("uhp_resource", user_id, permission_code, resource_id)
+    if request_key in request_cache:
+        return request_cache[request_key]
+
+    # Check cross-request (Django) cache before hitting the database.
+    cross_key = await _cross_request_key("r", user_id, permission_code, resource_id)
+    cached = await django_cache.aget(cross_key)
+    if cached is not None:
+        request_cache[request_key] = cached
+        return cached
+
+    result = await _user_has_permission_for_resource(user_id, permission_code, resource_id, {resource_id})
+    request_cache[request_key] = result
+    await django_cache.aset(cross_key, result, _PERM_CACHE_TTL)
+    return result
 
 
 async def get_user_domains(user):
@@ -139,22 +269,21 @@ async def get_user_domains(user):
         o.hex async for o in models.UserDomainRole.objects.filter(user=user).values_list("domain_id", flat=True)
     ]))
     if domain_ids:
-        domain_ids_str = "'" + "','".join(domain_ids) + "'"
-        table_name = "triplea_domain"
+        placeholders = ",".join(["%s"] * len(domain_ids))
         query = f"""
         WITH RECURSIVE children (id) AS (
-        SELECT {table_name}.id FROM {table_name} WHERE id in ({domain_ids_str})
+        SELECT triplea_domain.id FROM triplea_domain WHERE id IN ({placeholders})
           UNION ALL
-        SELECT {table_name}.id FROM children, {table_name}
-          WHERE {table_name}.parent_id = children.id
+        SELECT triplea_domain.id FROM children, triplea_domain
+          WHERE triplea_domain.parent_id = children.id
         )
-        SELECT {table_name}.id
-        FROM {table_name}, children WHERE children.id = {table_name}.id
+        SELECT triplea_domain.id
+        FROM triplea_domain, children WHERE children.id = triplea_domain.id
         """
-        recursive_ids = await sync_to_async(lambda: [o.id for o in models.Domain.objects.raw(query)])()
+        recursive_ids = await sync_to_async(lambda: [o.id for o in models.Domain.objects.raw(query, domain_ids)])()
         return models.Domain.objects.filter(
             id__in=domain_ids + recursive_ids
-        ).order_by("title")
+        ).select_related("parent").order_by("title")
     else:
         return models.Domain.objects.none()
 
@@ -197,10 +326,14 @@ async def domain_roles_permissions_mapping(domain):
     """
     rows = []
     roles = await get_domain_roles(domain)
+    active_pairs = {
+        (obj.role_id, obj.permission_id)
+        async for obj in models.DomainRolePermission.objects.filter(domain=domain)
+    }
     for permission in await get_domain_permissions(domain):
         row = [permission]
         for role in roles:
-            active = await models.DomainRolePermission.objects.filter(domain=domain, role=role, permission=permission).aexists()
+            active = (role.id, permission.id) in active_pairs
             row.append({"permission": permission, "active": active, "role": role})
         rows.append(row)
     return rows
@@ -210,10 +343,10 @@ async def get_resource_roles(resource):
     found = []
     parent = resource
     while parent is not None:
-        async for obj in models.ResourceRolePermission.objects.filter(resource=resource).select_related("role"):
+        async for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("role"):
             if obj.role not in found:
                 found.append(obj.role)
-        parent = resource.parent
+        parent = parent.parent
 
     domain = await models.Domain.objects.aget(id=resource.domain_id)
     for role in await get_domain_roles(domain):
@@ -227,15 +360,15 @@ async def get_resource_permissions(resource):
     found = []
     parent = resource
     while parent is not None:
-        async for obj in models.ResourcePermission.objects.filter(resource=resource).select_related("permission"):
+        async for obj in models.ResourcePermission.objects.filter(resource=parent).select_related("permission"):
             if obj.permission not in found:
                 # We cheat a bit by gluing inherit on the permission
                 obj.permission.inherit = obj.inherit
                 found.append(obj.permission)
-        async for obj in models.ResourceRolePermission.objects.filter(resource=resource).select_related("permission"):
+        async for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("permission"):
             if obj.permission not in found:
                 found.append(obj.permission)
-        parent = resource.parent
+        parent = parent.parent
 
     domain = await models.Domain.objects.aget(id=resource.domain_id)
     for permission in await get_domain_permissions(domain):
@@ -255,10 +388,146 @@ async def resource_roles_permissions_mapping(resource):
     """
     rows = []
     roles = await get_resource_roles(resource)
+    active_pairs = {
+        (obj.role_id, obj.permission_id)
+        async for obj in models.ResourceRolePermission.objects.filter(resource=resource)
+    }
     for permission in await get_resource_permissions(resource):
         row = [permission]
         for role in roles:
-            active = await models.ResourceRolePermission.objects.filter(resource=resource, role=role, permission=permission).aexists()
+            active = (role.id, permission.id) in active_pairs
+            row.append({"permission": permission, "active": active, "role": role})
+        rows.append(row)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Sync utility variants (P3.5)
+# ---------------------------------------------------------------------------
+# Used by Django admin views and the OAuth validator which run in a sync WSGI
+# context.  These avoid the event-loop overhead of async_to_sync() wrappers by
+# using the synchronous Django ORM directly.
+
+def get_user_domains_sync(user):
+    """Synchronous variant of get_user_domains for use in sync (admin/OAuth) contexts."""
+    domain_ids = list({
+        value.hex
+        for value in models.UserDomainRole.objects.filter(user=user).values_list("domain_id", flat=True)
+    })
+    if not domain_ids:
+        return models.Domain.objects.none()
+    placeholders = ",".join(["%s"] * len(domain_ids))
+    query = f"""
+    WITH RECURSIVE children (id) AS (
+    SELECT triplea_domain.id FROM triplea_domain WHERE id IN ({placeholders})
+      UNION ALL
+    SELECT triplea_domain.id FROM children, triplea_domain
+      WHERE triplea_domain.parent_id = children.id
+    )
+    SELECT triplea_domain.id
+    FROM triplea_domain, children WHERE children.id = triplea_domain.id
+    """
+    recursive_ids = [o.id for o in models.Domain.objects.raw(query, domain_ids)]
+    return models.Domain.objects.filter(
+        id__in=domain_ids + recursive_ids
+    ).select_related("parent").order_by("title")
+
+
+def _get_domain_roles_sync(domain):
+    found = []
+    parent = domain
+    while parent is not None:
+        for obj in models.DomainRolePermission.objects.filter(domain=parent).select_related("role"):
+            if obj.role not in found:
+                found.append(obj.role)
+        parent = parent.parent
+    return sorted(found, key=lambda item: item.code)
+
+
+def _get_domain_permissions_sync(domain):
+    found = []
+    parent = domain
+    while parent is not None:
+        for obj in models.DomainPermission.objects.filter(domain=parent).select_related("permission"):
+            if obj.permission not in found:
+                obj.permission.inherit = obj.inherit
+                found.append(obj.permission)
+        for obj in models.DomainRolePermission.objects.filter(domain=parent).select_related("permission"):
+            if obj.permission not in found:
+                found.append(obj.permission)
+        parent = parent.parent
+    for item in found:
+        if not hasattr(item, "inherit"):
+            item.inherit = True
+    return sorted(found, key=lambda item: item.code)
+
+
+def domain_roles_permissions_mapping_sync(domain):
+    """Synchronous variant of domain_roles_permissions_mapping for admin views."""
+    rows = []
+    roles = _get_domain_roles_sync(domain)
+    active_pairs = {
+        (obj.role_id, obj.permission_id)
+        for obj in models.DomainRolePermission.objects.filter(domain=domain)
+    }
+    for permission in _get_domain_permissions_sync(domain):
+        row = [permission]
+        for role in roles:
+            active = (role.id, permission.id) in active_pairs
+            row.append({"permission": permission, "active": active, "role": role})
+        rows.append(row)
+    return rows
+
+
+def _get_resource_roles_sync(resource):
+    found = []
+    parent = resource
+    while parent is not None:
+        for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("role"):
+            if obj.role not in found:
+                found.append(obj.role)
+        parent = parent.parent
+    domain = models.Domain.objects.get(id=resource.domain_id)
+    for role in _get_domain_roles_sync(domain):
+        if role not in found:
+            found.append(role)
+    return sorted(found, key=lambda item: item.code)
+
+
+def _get_resource_permissions_sync(resource):
+    found = []
+    parent = resource
+    while parent is not None:
+        for obj in models.ResourcePermission.objects.filter(resource=parent).select_related("permission"):
+            if obj.permission not in found:
+                obj.permission.inherit = obj.inherit
+                found.append(obj.permission)
+        for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("permission"):
+            if obj.permission not in found:
+                found.append(obj.permission)
+        parent = parent.parent
+    domain = models.Domain.objects.get(id=resource.domain_id)
+    for permission in _get_domain_permissions_sync(domain):
+        if permission not in found:
+            found.append(permission)
+    for item in found:
+        if not hasattr(item, "inherit"):
+            item.inherit = True
+    return sorted(found, key=lambda item: item.code)
+
+
+def resource_roles_permissions_mapping_sync(resource):
+    """Synchronous variant of resource_roles_permissions_mapping for admin views."""
+    rows = []
+    roles = _get_resource_roles_sync(resource)
+    active_pairs = {
+        (obj.role_id, obj.permission_id)
+        for obj in models.ResourceRolePermission.objects.filter(resource=resource)
+    }
+    for permission in _get_resource_permissions_sync(resource):
+        row = [permission]
+        for role in roles:
+            active = (role.id, permission.id) in active_pairs
             row.append({"permission": permission, "active": active, "role": role})
         rows.append(row)
     return rows

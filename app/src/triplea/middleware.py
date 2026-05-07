@@ -1,5 +1,3 @@
-import datetime
-
 from django.http import HttpResponseRedirect
 
 
@@ -18,8 +16,7 @@ def oauth_complete_process(get_response):
 
         if request.user.is_authenticated:
             response = HttpResponseRedirect(redirect_next)
-            expires = datetime.datetime.now() + datetime.timedelta(days=365)
-            response.set_cookie("oauth_redirect_next", "", expires=expires)
+            response.delete_cookie("oauth_redirect_next")
             return response
 
         return get_response(request)

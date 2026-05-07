@@ -1,9 +1,7 @@
-import pickle
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.core import mail
-from django.core.mail import EmailMessage as DjangoEmailMessage
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -12,13 +10,12 @@ from triplea.mail.tasks import send_mail, send_unsent_mails, vacuum
 
 
 def _make_db_message(subject="Subject"):
-    django_msg = DjangoEmailMessage(
+    return EmailMessage.objects.create(
         subject=subject,
         body="Body",
         from_email="from@example.com",
         to=["to@example.com"],
     )
-    return EmailMessage.objects.create(pickled=pickle.dumps(django_msg))
 
 
 @override_settings(EMAIL_BACKEND="triplea.mail.backends.CeleryLocMemBackend")
@@ -54,6 +51,22 @@ class SendMailTaskTestCase(TestCase):
 
         # Second call is a no-op; outbox count must not increase.
         self.assertEqual(len(mail.outbox), outbox_count_after_first)
+
+    def test_send_mail_preserves_recipients(self):
+        obj = EmailMessage.objects.create(
+            subject="Multi",
+            body="Body",
+            from_email="from@example.com",
+            to=["a@example.com", "b@example.com"],
+            cc=["cc@example.com"],
+            bcc=["bcc@example.com"],
+        )
+        send_mail.apply(args=[obj.id])
+        self.assertEqual(len(mail.outbox), 1)
+        sent = mail.outbox[0]
+        self.assertEqual(sent.to, ["a@example.com", "b@example.com"])
+        self.assertEqual(sent.cc, ["cc@example.com"])
+        self.assertEqual(sent.bcc, ["bcc@example.com"])
 
 
 @override_settings(EMAIL_BACKEND="triplea.mail.backends.CeleryLocMemBackend")

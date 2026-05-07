@@ -2,9 +2,13 @@ from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 
 from triplea.serializers import UserSerializer
+from triplea_api.utils import check_rate_limit
 
 
 async def post(body, **kwargs):
+    if await check_rate_limit("user_login", "10/5m"):
+        return {"message": "Too many requests."}, 429
+
     User = get_user_model()
 
     user = await User.objects.filter(email=body["email"]).afirst()

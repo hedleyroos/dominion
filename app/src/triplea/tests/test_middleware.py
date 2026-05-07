@@ -50,9 +50,9 @@ class OAuthCompleteProcessTestCase(TestCase):
 
         response = middleware(request)
 
-        # Cookie must be cleared (set to empty string).
+        # Cookie must be deleted (max-age=0).
         self.assertIn("oauth_redirect_next", response.cookies)
-        self.assertEqual(response.cookies["oauth_redirect_next"].value, "")
+        self.assertEqual(response.cookies["oauth_redirect_next"]["max-age"], 0)
 
     def test_cookie_and_anonymous_user_passes_through(self):
         request = self.factory.get("/some/path/")

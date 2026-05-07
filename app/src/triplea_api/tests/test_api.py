@@ -599,3 +599,72 @@ class APITestCase(BaseTestCase):
             response = await client.delete("/api/v1.0/resourcerolepermission/%s" % rrp_id)
             assert response.status_code == 204
 
+    async def test_access_domain_permission_allowed(self):
+        # Owner has check_access on domaina (owner role includes check_access).
+        async with await self.get_client("owner") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permission/%s/%s/read"
+                % (self.owner.id, self.domaina.id)
+            )
+            assert response.status_code == 200
+            assert response.json() == {"result": True}
+
+    async def test_access_domain_permission_denied_no_check_access(self):
+        # Piet has no check_access permission on domaina so the endpoint returns 403.
+        async with await self.get_client("piet") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permission/%s/%s/read"
+                % (self.piet.id, self.domaina.id)
+            )
+            assert response.status_code == 403
+
+    async def test_login_no_matching_email(self):
+        transport = httpx.ASGITransport(app=self.application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/v1.0/user/login",
+                json={"email": "nobody@test.com", "password": "password"},
+            )
+            assert response.status_code == 401
+
+    async def test_login_with_email(self):
+        # Set email on owner so login can find the user by email.
+        self.owner.email = "owner@test.com"
+        await self.owner.asave()
+        transport = httpx.ASGITransport(app=self.application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/v1.0/user/login",
+                json={"email": "owner@test.com", "password": "password"},
+            )
+            assert response.status_code == 200
+            assert response.json()["username"] == "owner"
+
+    async def test_login_wrong_password(self):
+        self.owner.email = "owner@test.com"
+        await self.owner.asave()
+        transport = httpx.ASGITransport(app=self.application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.post(
+                "/api/v1.0/user/login",
+                json={"email": "owner@test.com", "password": "wrongpassword"},
+            )
+            assert response.status_code == 401
+
+    async def test_by_api_key_success(self):
+        transport = httpx.ASGITransport(app=self.application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(
+                "/api/v1.0/user/by-api-key/%s" % self.owner.api_key
+            )
+            assert response.status_code == 200
+            assert response.json()["username"] == "owner"
+
+    async def test_by_api_key_not_found(self):
+        import uuid
+        transport = httpx.ASGITransport(app=self.application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(
+                "/api/v1.0/user/by-api-key/%s" % uuid.uuid4()
+            )
+            assert response.status_code == 404
