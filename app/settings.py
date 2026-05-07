@@ -195,13 +195,6 @@ CELERY_BEAT_SCHEDULE = {
 ACCOUNT_ACTIVATION_DAYS = 7
 REGISTRATION_SALT = "triplea-salt-here"
 
-# The database adapter needs work in case of using pypy
-try:
-    import psycopg2
-except ImportError:
-    from psycopg2cffi import compat
-    compat.register()
-
 # Mail settings. See Django docs and mail.backends for options.
 EMAIL_BACKEND = env.str("EMAIL_BACKEND", 'triplea.mail.backends.CeleryFileBackend')
 EMAIL_FILE_PATH = '/tmp/app-messages'

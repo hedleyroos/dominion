@@ -10,15 +10,71 @@ Version: **0.1.14**
 
 | Component | Technology |
 |-----------|-----------|
-| Web framework | Django 4.0 |
+| Web framework | Django 5.2 LTS |
 | REST API | Connexion 2 (OpenAPI 3.0 → Flask) |
 | Serialization | Django REST Framework |
 | OAuth2 / OIDC | django-oauth-toolkit + mozilla-django-oidc |
-| Async tasks | Celery |
+| Async tasks | Celery 5 |
 | Message broker | RabbitMQ (AMQP) |
 | Task result backend | Redis |
 | Database | PostgreSQL (production), SQLite (development) |
+| Database adapter | psycopg 3 |
 | Registration | django-registration |
+
+---
+
+## Dependency Management
+
+Top-level dependencies are declared in `requirements.in` with loose version pins. Run `pip-compile requirements.in --output-file requirements.txt` to regenerate the fully-pinned `requirements.txt`. This is the source of truth for production installs.
+
+---
+
+## Test Stack
+
+| Tool | Purpose |
+|------|---------|
+| pytest | Test runner (via `tox`) |
+| pytest-django | Django integration — `@pytest.mark.django_db`, test settings |
+| pytest-asyncio | Async/await test support (`asyncio_mode = auto`) |
+| pytest-xdist | Parallel execution (`-n auto`) |
+
+Configuration lives in `pytest.ini` (project root) and `conftest.py` (project root).
+
+Run all environments:
+```
+tox
+```
+
+Run a single environment with extra args:
+```
+tox -e app -- -k test_domaina_read
+```
+
+---
+
+## Async Groundwork
+
+Views are currently synchronous (WSGI). The groundwork for async is in place:
+
+- `app/asgi.py` exposes a standard ASGI application.
+- `app/src/triplea/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
+- `pytest-asyncio` is installed and configured.
+
+Full async view conversion is deferred to a future phase.
+
+---
+
+## Docker
+
+`Dockerfile` — `python:3.12-slim` base, `gcc`+`libpq-dev` for psycopg compilation, gunicorn+gevent entrypoint on port 8000. Validates the build architecture via `uname -m` and errors on unsupported targets. Builds for both `amd64` and `arm64` without modification (no arch-specific wheel splits needed as there are no GPU/native-binary dependencies).
+
+`docker-compose.yaml` — local development stack: app + celery worker + PostgreSQL 16 + RabbitMQ 3 + Redis 7. All service images pulled from the local registry (`localhost:5000`).
+
+Build:
+```
+docker build -t triplea:latest .
+docker buildx build --platform linux/amd64,linux/arm64 -t triplea:latest .
+```
 
 ---
 
@@ -361,6 +417,8 @@ Failed sends are retried by the `send_unsent_mails` beat task.
 
 ### Celery Configuration (`app/celery.py`)
 
+All config keys use the modern lowercase form (Celery 5+ style).
+
 | Setting | Value |
 |---------|-------|
 | Broker | `amqp://localhost:5672//` (RabbitMQ) — overridable via env |
@@ -436,7 +494,7 @@ Key settings in `app/settings.py`. Most runtime values are read from environment
 | `AUTH_USER_MODEL` | `triplea.User` | Custom user model |
 | `LOGIN_URL` | `/accounts/login/` | |
 | `SESSION_COOKIE_NAME` | `tripleasessionid` | |
-| `DATABASE_URL` | SQLite | PostgreSQL in production |
+| `DATABASE_URL` | SQLite | PostgreSQL in production (psycopg 3) |
 | `EMAIL_BACKEND` | `CeleryFileBackend` | Set to `CelerySmtpBackend` or `CelerySESBackend` for production |
 | `TRIPLEA_API_RESULTS_PER_PAGE` | 100 | Pagination page size |
 | `TRIPLEA_MAX_DESCENDANT_DOMAINS` | 1000 | Soft limit on domains per root |

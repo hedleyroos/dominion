@@ -29,21 +29,22 @@ class ViewsTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.request['PATH_INFO'], "/accounts/register/complete/")
 
-        # Check mail, extract link and follow
+        # Check mail, extract activation key and POST to activate
         obj = EmailMessage.objects.all().last()
         body = obj.unpickled.body
-        link = "/" + re.search(r"testserver/([^'\"\n >]+)", body).group(1)
-        response = self.client.get(link, follow=True)
+        key = re.search(r"activation_key=([^\s'\"]+)", body).group(1)
+        activate_url = reverse("django_registration_activate")
+        response = self.client.post(activate_url, {"activation_key": key}, follow=True)
         self.assertEqual(response.status_code, 200)
 
         # Confirm account is active and activation_date is set
         user = get_user_model().objects.get(email="koos@aaa.com")
-        self.failUnless(user.is_active)
-        self.failUnless(user.activation_date)
+        self.assertTrue(user.is_active)
+        self.assertTrue(user.activation_date)
 
         # Sign in
         url = reverse("login")
         response = self.client.post(url, {"username": "koos", "password": "local123"}, follow=True)
         self.assertEqual(response.status_code, 200)
-        self.failUnless(response.context['user'].is_authenticated)
+        self.assertTrue(response.context['user'].is_authenticated)
 

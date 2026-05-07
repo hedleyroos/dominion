@@ -17,9 +17,13 @@ def create_app():
 
 class APITestCase(BaseTestCase):
     @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.app = TestApp(create_app())
+
+    @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.app = TestApp(create_app())
 
     def test_create_user(self):
         self.app.authorization = ("Basic", ("owner", "password"))
@@ -345,11 +349,11 @@ class APITestCase(BaseTestCase):
 
         response = self.app.get("/api/v1.0/domain?page=4")
         self.assertEqual(response.json["previous"], "http://localhost/api/v1.0/domain?page=3")
-        self.failIf("next" in response.json)
+        self.assertFalse("next" in response.json)
 
         response = self.app.get("/api/v1.0/domain?page=5")
         self.assertEqual(response.json["previous"], "http://localhost/api/v1.0/domain?page=3")
-        self.failIf("next" in response.json)
+        self.assertFalse("next" in response.json)
 
     def test_role_crud(self):
         self.app.authorization = ("Basic", ("owner", "password"))

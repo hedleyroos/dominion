@@ -1,0 +1,65 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
+      CELERY_BACKEND: redis://redis:6379/3
+      DEBUG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["ve/bin/celery", "-A", "app.celery", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
+      CELERY_BACKEND: redis://redis:6379/3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: localhost:5000/postgres:16-alpine
+    environment:
+      POSTGRES_USER: triplea
+      POSTGRES_PASSWORD: triplea
+      POSTGRES_DB: triplea
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triplea"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: localhost:5000/rabbitmq:3-management-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: localhost:5000/redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:

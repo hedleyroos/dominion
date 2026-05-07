@@ -11,122 +11,122 @@ class ModelsTestCase(BaseTestCase):
         super().setUp()
 
     def test_domaina_read(self):
-        self.failUnless(user_has_permission_for_domain(self.owner.id, "read", self.domaina.id))
+        self.assertTrue(user_has_permission_for_domain(self.owner.id, "read", self.domaina.id))
 
-        self.failIf(user_has_permission_for_domain(self.piet.id, "read", self.domaina.id))
+        self.assertFalse(user_has_permission_for_domain(self.piet.id, "read", self.domaina.id))
 
-        self.failUnless(user_has_permission_for_domain(self.jan.id, "read", self.domaina.id))
+        self.assertTrue(user_has_permission_for_domain(self.jan.id, "read", self.domaina.id))
 
     def test_domainaa_read(self):
-        self.failUnless(user_has_permission_for_domain(self.owner.id, "read", self.domainaa.id))
+        self.assertTrue(user_has_permission_for_domain(self.owner.id, "read", self.domainaa.id))
 
-        self.failIf(user_has_permission_for_domain(self.piet.id, "read", self.domainaa.id))
+        self.assertFalse(user_has_permission_for_domain(self.piet.id, "read", self.domainaa.id))
 
-        self.failUnless(user_has_permission_for_domain(self.jan.id, "read", self.domainaa.id))
+        self.assertTrue(user_has_permission_for_domain(self.jan.id, "read", self.domainaa.id))
 
     def test_domaina_resourcea_read(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "read", self.domaina_resourcea.id)
         )
 
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.piet.id, "read", self.domaina_resourcea.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.jan.id, "read", self.domaina_resourcea.id)
         )
 
     def test_domaina_resourceaa_read(self):
         """Nobody can read domaina_resourceaa."""
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.owner.id, "read", self.domaina_resourceaa.id)
         )
 
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.jan.id, "read", self.domaina_resourceaa.id)
         )
 
     def test_domaina_resourceb_read(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "read", self.domaina_resourceb.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.piet.id, "read", self.domaina_resourceb.id)
         )
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.piet.id, "update", self.domaina_resourceb.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.jan.id, "read", self.domaina_resourceb.id)
         )
 
     def test_domaina_resourceba_read(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "read", self.domaina_resourceba.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.jan.id, "read", self.domaina_resourceba.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.piet.id, "read", self.domaina_resourceba.id)
         )
 
     def test_domaina_resourceca_read(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "read", self.domaina_resourceca.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.piet.id, "read", self.domaina_resourceca.id)
         )
 
     def test_domainaa_resourcea_read(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "read", self.domainaa_resourcea.id)
         )
 
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.piet.id, "read", self.domainaa_resourcea.id)
         )
 
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.jan.id, "read", self.domainaa_resourcea.id)
         )
 
     def test_domaina_resourcea_create(self):
         """Create a new resource contained by domaina_resourcea."""
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.owner.id, "create", self.domaina_resourcea.id)
         )
 
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.piet.id, "create", self.domaina_resourcea.id)
         )
 
-        self.failIf(
+        self.assertFalse(
             user_has_permission_for_resource(self.jan.id, "create", self.domaina_resourcea.id)
         )
 
     def test_karen_domaina_resourced_roles_and_permissions(self):
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.karen.id, "update", self.domaina_resourced.id)
         )
 
         # Remember, we set Manager role on domaina_resourced to be able to delete
-        self.failUnless(
+        self.assertTrue(
             user_has_permission_for_resource(self.karen.id, "delete", self.domaina_resourced.id)
         )
 
     def test_karen_domainab_roles_and_permissions(self):
-        self.failUnless(user_has_permission_for_domain(self.karen.id, "update", self.domainab.id))
+        self.assertTrue(user_has_permission_for_domain(self.karen.id, "update", self.domainab.id))
 
         # Remember, we set Manager role on domainab to be able to delete
-        self.failUnless(user_has_permission_for_domain(self.karen.id, "delete", self.domainab.id))
+        self.assertTrue(user_has_permission_for_domain(self.karen.id, "delete", self.domainab.id))
 
     def test_domainaa_root(self):
         self.assertEqual(self.domainaa.root, self.domaina)
