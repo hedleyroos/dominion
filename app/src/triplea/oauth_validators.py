@@ -1,5 +1,6 @@
 import uuid
 
+from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from oauth2_provider.oauth2_validators import OAuth2Validator
 
@@ -24,6 +25,7 @@ class CustomOAuth2Validator(OAuth2Validator):
                 username=app_user_username, email=app_user_email,
                 application_id=app_id,
             )
+        user_domains = async_to_sync(get_user_domains)(app_user)
         return {
             "given_name": request.user.first_name,
             "family_name": request.user.last_name,
@@ -31,7 +33,7 @@ class CustomOAuth2Validator(OAuth2Validator):
             "preferred_username": request.user.username,
             "email": request.user.email,
             "uuid": str(app_user.id),
-            "domains": [{"uuid": str(o.id), "title": o.title} for o in get_user_domains(app_user)],
+            "domains": [{"uuid": str(o.id), "title": o.title} for o in user_domains],
             "api_key": str(app_user.api_key),
         }
 

@@ -215,7 +215,8 @@ async def get_resource_roles(resource):
                 found.append(obj.role)
         parent = resource.parent
 
-    for role in await get_domain_roles(resource.domain):
+    domain = await models.Domain.objects.aget(id=resource.domain_id)
+    for role in await get_domain_roles(domain):
         if role not in found:
             found.append(role)
 
@@ -236,7 +237,8 @@ async def get_resource_permissions(resource):
                 found.append(obj.permission)
         parent = resource.parent
 
-    for permission in await get_domain_permissions(resource.domain):
+    domain = await models.Domain.objects.aget(id=resource.domain_id)
+    for permission in await get_domain_permissions(domain):
         if permission not in found:
             found.append(permission)
 
