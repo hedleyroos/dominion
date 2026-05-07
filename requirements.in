@@ -3,8 +3,9 @@
 #   pip-compile requirements.in --output-file requirements.txt
 
 # Web framework
-Django>=5.2,<5.3
+Django>=6.0
 djangorestframework>=3.15
+adrf
 
 # OAuth2 / OIDC
 django-oauth-toolkit>=3.0
@@ -14,7 +15,10 @@ mozilla-django-oidc>=4.0
 django-registration>=3.4
 
 # API layer
-connexion>=2.14,<3
+connexion>=3.2
+connexion[flask]
+swagger-ui-bundle
+uvicorn
 
 # Celery
 celery>=5.4
@@ -34,17 +38,14 @@ django-ses>=4.0
 
 # App servers
 gunicorn>=22.0
-gevent>=24.0
-psycogreen>=1.0
-uWSGI>=2.0
-waitress>=3.0
 
 # Configuration
 environs>=11.0
 PyYAML>=6.0
 
-# Async HTTP (groundwork for future async views)
+# Async HTTP
 httpx>=0.27
+respx
 
 # Django cache
 django-ultracache>=2.2
@@ -54,4 +55,3 @@ pytest>=8.0
 pytest-django>=4.8
 pytest-asyncio>=0.23
 pytest-xdist>=3.5
-webtest>=3.0

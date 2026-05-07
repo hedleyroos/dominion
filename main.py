@@ -3,11 +3,12 @@ import os
 import sys
 
 import connexion
-from connexion.resolver import RestyResolver
+from asgiref.sync import sync_to_async
 from django.conf import settings
-from django.core import management
 from django.core.wsgi import get_wsgi_application
 from django.db import close_old_connections
+from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 # Adjust path
@@ -16,16 +17,40 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/app/src')
 # Configure Django so the ORM works
 if not settings.configured:
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
-    application = get_wsgi_application()
 
-# Start Connexion
-app = connexion.App(__name__, specification_dir='app/')
-app.add_api('openapi.yaml', resolver=RestyResolver('triplea_api'), strict_validation=True)
+application = get_wsgi_application()
 
-# Replicate Django's request hooks to clean up database connections
-@app.app.before_request
-def on_before_request():
-    close_old_connections()
+# Create Connexion app
+app = connexion.AsyncApp("main", specification_dir='app/')
+app.add_middleware(
+    CORSMiddleware,
+    position=connexion.middleware.MiddlewarePosition.BEFORE_ROUTING,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.add_api(
+    'openapi.yaml',
+    resolver=connexion.resolver.RestyResolver('triplea_api'),
+    strict_validation=True,
+)
+
+
+# Replicate Django's request hooks to clean up database connections.
+class DjangoConnectionsMiddleware:
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        await sync_to_async(close_old_connections)()
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(
+    DjangoConnectionsMiddleware, connexion.middleware.MiddlewarePosition.BEFORE_SECURITY
+)
+
 
 if __name__ == "__main__":
-    app.run(port=8090)
+    app.run(f"main:app", port=8090)

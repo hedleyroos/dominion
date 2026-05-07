@@ -1,24 +1,22 @@
-from uuid import UUID
-
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
-from flask import request
 
 from triplea.serializers import UserSerializer
 
 
-def post(body, **kwargs):
-    # Authenticate user using Django's auth system
+async def post(body, **kwargs):
     User = get_user_model()
-    try:
-        user = User.objects.get(email=body["email"])
-    except User.DoesNotExist:
+
+    user = await User.objects.filter(email=body["email"]).afirst()
+    if user is None:
         return {"message": "Invalid credentials"}, 401
 
     if not user.is_active:
         return {"message": "Account is not activated"}, 401
 
-    if not user.check_password(body["password"]):
+    password_ok = await sync_to_async(user.check_password)(body["password"])
+    if not password_ok:
         return {"message": "Invalid credentials"}, 401
 
-    return UserSerializer(instance=user).data, 200
+    return await UserSerializer(instance=user).adata, 200
+

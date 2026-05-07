@@ -1,30 +1,28 @@
 import os
 
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 
 
-def basic_auth(username, password, required_scopes=None):
+async def basic_auth(username, password, required_scopes=None):
     User = get_user_model()
 
-    # We're guaranteed exactly zero or one results. This style is to prevent redundant queries.
-    try:
-        user = User.objects.get(username=username)
-    except User.DoesNotExist:
+    user = await User.objects.filter(username=username).afirst()
+    if user is None:
         return None
 
-    if not user.check_password(password):
+    password_ok = await sync_to_async(user.check_password)(password)
+    if not password_ok:
         return None
 
     return {"uid": username, "scope": "", "user": user}
 
 
-def apikey_auth(api_key, required_scopes=None):
+async def apikey_auth(api_key, required_scopes=None):
     User = get_user_model()
 
-    # We're guaranteed exactly zero or one results. This style is to prevent redundant queries.
-    try:
-        user = User.objects.get(api_key=api_key)
-    except User.DoesNotExist:
+    user = await User.objects.filter(api_key=api_key).afirst()
+    if user is None:
         return None
 
     return {"uid": user.username, "scope": "", "user": user}

@@ -1,18 +1,19 @@
 from uuid import UUID
 
+from asgiref.sync import sync_to_async
+from connexion import request
 from django.core.exceptions import ValidationError
 from django.db.models.deletion import ProtectedError
-from flask import request
 
 from triplea.models import Role, UserDomainRole
 from triplea.serializers import UserDomainRoleSerializer
-from triplea.utils import user_has_permission_for_domain
+from triplea.utils import user_has_permission_for_domain, get_user_domains
 
 
 ITEM_NOT_FOUND = "Item not found for id: {}."
 
 
-def post(body, user, token_info, **kwargs):
+async def post(body, user, token_info, **kwargs):
     user = token_info["user"]
 
     user_id = body.pop("user")
@@ -26,7 +27,7 @@ def post(body, user, token_info, **kwargs):
         except ValueError:
             return {"message": "%s is not a valid UUID." % id}, 400
 
-    if not user_has_permission_for_domain(user.pk, "manage_roles", domain_id):
+    if not await user_has_permission_for_domain(user.pk, "manage_roles", domain_id):
         return {
             "message": "You do not have permission to create user roles for this domain."
         }, 403
@@ -35,7 +36,8 @@ def post(body, user, token_info, **kwargs):
     body["domain_id"] = domain_id
 
     try:
-        body["role_id"] = Role.objects.get(code=role_code).id
+        role = await Role.objects.aget(code=role_code)
+        body["role_id"] = role.id
     except Role.DoesNotExist:
         return {"message": "%s is not a valid role" % role_code}, 404
 
@@ -43,7 +45,7 @@ def post(body, user, token_info, **kwargs):
     # This provides us with clean error messages.
     try:
         obj = UserDomainRole(**body)
-        obj.full_clean()
+        await sync_to_async(obj.full_clean)()
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
@@ -52,17 +54,18 @@ def post(body, user, token_info, **kwargs):
 
     # Actually create and persist an object
     try:
-        obj = UserDomainRole.objects.create(**body)
+        obj = await UserDomainRole.objects.acreate(**body)
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
 
-    return UserDomainRoleSerializer(instance=obj).data, 201
+    obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    return await UserDomainRoleSerializer(instance=obj).adata, 201
 
 
-def get(id, user, token_info, **kwargs):
+async def get(id, user, token_info, **kwargs):
     user = token_info["user"]
 
     # Connexion doesn't validate UUID's yet
@@ -72,17 +75,17 @@ def get(id, user, token_info, **kwargs):
         return {"message": "%s is not a valid UUID." % id}, 400
 
     try:
-        obj = UserDomainRole.objects.get(id=id)
+        obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=id)
     except UserDomainRole.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(id)}, 404
 
-    if not user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
+    if not await user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
         return {"message": "You do not have permission to read this item."}, 403
 
-    return UserDomainRoleSerializer(instance=obj).data, 200
+    return await UserDomainRoleSerializer(instance=obj).adata, 200
 
 
-def put(id, body, user, token_info, **kwargs):
+async def put(id, body, user, token_info, **kwargs):
     user = token_info["user"]
 
     # Connexion doesn't validate UUID's yet
@@ -92,11 +95,11 @@ def put(id, body, user, token_info, **kwargs):
         return {"message": "%s is not a valid UUID." % id}, 400
 
     try:
-        obj = UserDomainRole.objects.get(id=id)
+        obj = await UserDomainRole.objects.select_related("domain").aget(id=id)
     except UserDomainRole.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(id)}, 404
 
-    if not user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
+    if not await user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
         return {"message": "You do not have permission to update this item."}, 403
 
     user_id = body.pop("user", None)
@@ -104,19 +107,14 @@ def put(id, body, user, token_info, **kwargs):
     role_code = body.pop("role", None)
 
     # Connexion doesn't validate UUID's yet
-    for id in (user_id, domain_id):
-        if id:
+    for check_id in (user_id, domain_id):
+        if check_id:
             try:
-                UUID(id)
+                UUID(check_id)
             except ValueError:
-                return {"message": "%s is not a valid UUID." % id}, 400
+                return {"message": "%s is not a valid UUID." % check_id}, 400
 
-    if domain_id and not user_has_permission_for_domain(user.pk, "manage_roles", domain_id):
-        return {
-            "message": "You do not have permission to update user roles for this domain."
-        }, 403
-
-    if not user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
+    if domain_id and not await user_has_permission_for_domain(user.pk, "manage_roles", domain_id):
         return {
             "message": "You do not have permission to update user roles for this domain."
         }, 403
@@ -128,37 +126,39 @@ def put(id, body, user, token_info, **kwargs):
 
     if role_code:
         try:
-            body["role_id"] = Role.objects.get(code=role_code).id
+            role = await Role.objects.aget(code=role_code)
+            body["role_id"] = role.id
         except Role.DoesNotExist:
             return {"message": "%s is not a valid role" % role_code}, 404
 
     for k, v in body.items():
         setattr(obj, k, v)
     try:
-        obj.full_clean()
-        obj.save()
+        await sync_to_async(obj.full_clean)()
+        await obj.asave()
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
 
-    return UserDomainRoleSerializer(instance=obj).data, 200
+    obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    return await UserDomainRoleSerializer(instance=obj).adata, 200
 
 
-def delete(id, user, token_info, **kwargs):
+async def delete(id, user, token_info, **kwargs):
     user = token_info["user"]
 
     try:
-        obj = UserDomainRole.objects.get(id=id)
+        obj = await UserDomainRole.objects.select_related("domain").aget(id=id)
     except UserDomainRole.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(id)}, 404
 
-    if not user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
+    if not await user_has_permission_for_domain(user.pk, "manage_roles", obj.domain.id):
         return {"message": "You do not have permission to delete user roles for this domain."}, 403
 
     try:
-        obj.delete()
+        await obj.adelete()
     except ProtectedError:
         return {
             "message": "Cannot delete item because other items are dependent on it. You must delete those items first."
@@ -167,6 +167,11 @@ def delete(id, user, token_info, **kwargs):
     return {"message": "Item deleted successfully"}, 204
 
 
-def search(user, token_info, **kwargs):
+async def search(user, token_info, **kwargs):
     user = token_info["user"]
-    return paginate_result(UserDomainRole.objects.filter(domain__in=get_user_domains(user)), UserDomainRoleSerializer, request)
+    user_domains = await get_user_domains(user)
+    return await paginate_result(
+        UserDomainRole.objects.filter(domain__in=user_domains),
+        UserDomainRoleSerializer
+    )
+
