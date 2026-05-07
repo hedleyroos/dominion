@@ -13,4 +13,8 @@ class EmailMessage(models.Model):
 
     @property
     def unpickled(self):
-        return pickle.loads(self.pickled)
+        # TODO: migrate to structured JSON fields to eliminate the pickle surface entirely.
+        try:
+            return pickle.loads(self.pickled)
+        except Exception:
+            return None

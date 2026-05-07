@@ -113,7 +113,7 @@ async def search(user, token_info, **kwargs):
     # for the domain. That is a separate check that is expensive.
     root_domains = (await get_user_domains(user)).filter(parent__isnull=True)
     return await paginate_result(
-        Role.objects.filter(Q(domain__in=root_domains) | DEFAULT_ROLES_Q).order_by("code"),
+        Role.objects.filter(Q(domain__in=root_domains) | DEFAULT_ROLES_Q).select_related("domain").order_by("code"),
         RoleSerializer
     )
 

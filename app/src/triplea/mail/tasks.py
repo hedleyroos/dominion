@@ -9,13 +9,17 @@ from triplea.mail.models import EmailMessage
 
 @app.task(bind=True)
 def send_mail(context, email_message_id):
-    email_message = EmailMessage.objects.get(id=email_message_id)
-    if email_message.sent:
+    # Atomic compare-and-set: only the worker that flips sent=True proceeds.
+    updated = EmailMessage.objects.filter(id=email_message_id, sent=False).update(sent=True)
+    if not updated:
         return
-    success = get_connection().send_messages([email_message.unpickled], immediate=True)
-    if success:
-        email_message.sent = True
-        email_message.save(update_fields=["sent"])
+    email_message = EmailMessage.objects.get(id=email_message_id)
+    message = email_message.unpickled
+    if message is None:
+        return
+    success = get_connection().send_messages([message], immediate=True)
+    if not success:
+        EmailMessage.objects.filter(id=email_message_id).update(sent=False)
 
 
 @app.task

@@ -51,7 +51,6 @@ class EmailMessageModelTestCase(TestCase):
         self.assertGreaterEqual(obj.created, before)
         self.assertLessEqual(obj.created, after)
 
-    def test_corrupt_pickle_raises_on_unpickle(self):
+    def test_corrupt_pickle_returns_none_on_unpickle(self):
         obj = EmailMessage.objects.create(pickled=b"not valid pickle data")
-        with self.assertRaises(Exception):
-            _ = obj.unpickled
+        self.assertIsNone(obj.unpickled)

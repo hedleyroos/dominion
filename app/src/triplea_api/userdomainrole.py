@@ -8,6 +8,7 @@ from django.db.models.deletion import ProtectedError
 from triplea.models import Role, UserDomainRole
 from triplea.serializers import UserDomainRoleSerializer
 from triplea.utils import user_has_permission_for_domain, get_user_domains
+from triplea_api.utils import paginate_result
 
 
 ITEM_NOT_FOUND = "Item not found for id: {}."
@@ -171,7 +172,7 @@ async def search(user, token_info, **kwargs):
     user = token_info["user"]
     user_domains = await get_user_domains(user)
     return await paginate_result(
-        UserDomainRole.objects.filter(domain__in=user_domains),
+        UserDomainRole.objects.filter(domain__in=user_domains).select_related("role", "domain", "user"),
         UserDomainRoleSerializer
     )
 
