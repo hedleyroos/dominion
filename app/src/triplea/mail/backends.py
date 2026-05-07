@@ -1,5 +1,4 @@
 import threading
-import pickle
 
 from django.core.mail.backends.filebased import EmailBackend as FileEmailBackend
 from django.core.mail.backends.locmem import EmailBackend as LocMemEmailBackend
@@ -16,8 +15,17 @@ class Mixin:
         # of queuing them.
         if immediate:
             return super().send_messages(email_messages)
-        for email_message in email_messages:
-            obj = EmailMessage.objects.create(pickled=pickle.dumps(email_message))
+        for message in email_messages:
+            obj = EmailMessage.objects.create(
+                subject=message.subject,
+                body=message.body,
+                from_email=message.from_email,
+                to=list(message.to),
+                cc=list(message.cc),
+                bcc=list(message.bcc),
+                reply_to=list(message.reply_to),
+                headers=dict(message.extra_headers),
+            )
             send_mail.apply_async(args=[obj.id], countdown=5)
         # The return value is not really useful when queuing, but it is required
         return len(email_messages)

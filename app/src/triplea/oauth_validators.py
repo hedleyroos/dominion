@@ -1,10 +1,9 @@
 import uuid
 
-from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from oauth2_provider.oauth2_validators import OAuth2Validator
 
-from triplea.utils import get_user_domains
+from triplea.utils import get_user_domains_sync
 
 
 class CustomOAuth2Validator(OAuth2Validator):
@@ -23,7 +22,7 @@ class CustomOAuth2Validator(OAuth2Validator):
             application_id=app_id,
             defaults={"email": app_user_email},
         )
-        user_domains = async_to_sync(get_user_domains)(app_user)
+        user_domains = get_user_domains_sync(app_user)
         return {
             "given_name": request.user.first_name,
             "family_name": request.user.last_name,

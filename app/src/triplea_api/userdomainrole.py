@@ -8,7 +8,7 @@ from django.db.models.deletion import ProtectedError
 
 from triplea.models import Role, UserDomainRole
 from triplea.serializers import UserDomainRoleSerializer
-from triplea.utils import user_has_permission_for_domain, get_user_domains
+from triplea.utils import user_has_permission_for_domain, get_user_domains, invalidate_user_permissions
 from triplea_api.utils import paginate_result
 
 
@@ -65,6 +65,7 @@ async def post(body, user, token_info, **kwargs):
             return {"message": e.messages[0]}, 422
 
     obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    await invalidate_user_permissions(str(user_id))
     logger.debug("action=create object_type=UserDomainRole object_id=%s user=%s", obj.id, user.pk)
     return await UserDomainRoleSerializer(instance=obj).adata, 201
 
@@ -147,6 +148,8 @@ async def put(id, body, user, token_info, **kwargs):
             return {"message": e.messages[0]}, 422
 
     obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    if user_id:
+        await invalidate_user_permissions(str(user_id))
     logger.debug("action=update object_type=UserDomainRole object_id=%s user=%s", obj.id, user.pk)
     return await UserDomainRoleSerializer(instance=obj).adata, 200
 
@@ -169,6 +172,7 @@ async def delete(id, user, token_info, **kwargs):
             "message": "Cannot delete item because other items are dependent on it. You must delete those items first."
         }, 422
 
+    await invalidate_user_permissions(str(obj.user_id))
     logger.debug("action=delete object_type=UserDomainRole object_id=%s user=%s", id, user.pk)
     return {"message": "Item deleted successfully"}, 204
 

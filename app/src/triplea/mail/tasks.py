@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.core.mail import EmailMessage as DjangoEmailMessage
 from django.core.mail import get_connection
 from django.utils import timezone
 
@@ -14,9 +15,16 @@ def send_mail(context, email_message_id):
     if not updated:
         return
     email_message = EmailMessage.objects.get(id=email_message_id)
-    message = email_message.unpickled
-    if message is None:
-        return
+    message = DjangoEmailMessage(
+        subject=email_message.subject,
+        body=email_message.body,
+        from_email=email_message.from_email,
+        to=email_message.to,
+        cc=email_message.cc,
+        bcc=email_message.bcc,
+        reply_to=email_message.reply_to,
+        headers=email_message.headers,
+    )
     success = get_connection().send_messages([message], immediate=True)
     if not success:
         EmailMessage.objects.filter(id=email_message_id).update(sent=False)
