@@ -44,6 +44,22 @@ The following were identified but are out of scope for this phase:
 
 ---
 
+## Implemented: P2 (phase two session)
+
+All items below were implemented and verified (`tox` green) in the follow-up session:
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | Cookie expiry bug | ✅ Done | `middleware.py` now calls `delete_cookie()` on the authenticated branch; test updated to assert `max-age == 0`. |
+| 2 | Rate limiting | ✅ Done | Added `django-ratelimit 4.1.0`. Login (10/5m), register (5/h), by-api-key (30/m) via `is_ratelimited` in async Connexion endpoints; Django `LoginView` and `RegistrationView` wrapped with `ratelimit(key="ip", block=True)` decorator. `CACHES` configured to use Redis (`REDIS_URL` env var) in production and `LocMemCache` in development/tests (when `REDIS_URL` is unset). `RATELIMIT_USE_CACHE = "default"` added to `settings.py`. |
+| 3 | Audit logging | ✅ Done | Added `LOGGING` config in `settings.py` (handler: `StreamHandler`, logger: `triplea.audit` at `INFO`). Added `logger.info("action=... object_type=... object_id=... user=...")` calls on successful create/update/delete in `userdomainrole.py`, `userresourcerole.py`, `domainrolepermission.py`, `resourcerolepermission.py`. |
+| 4 | Docker image | ✅ Done | Multi-stage build: `builder` stage installs deps; `final` stage uses `python:3.12-slim` with only `libpq5`, creates non-root `appuser`, copies deps from builder. `HEALTHCHECK` calls `/healthz`. `HealthView` added to `views.py` and `urls.py`. |
+| 5 | Gunicorn workers | ⏸ Deferred | `run-gunicorn.sh` is for local dev only. Left as-is per user instruction. |
+| 6 | Test coverage | ✅ Done | Added tests in `test_api.py`: `test_access_domain_permission_allowed`, `test_access_domain_permission_denied_no_check_access`, `test_login_no_matching_email`, `test_login_with_email`, `test_login_wrong_password`, `test_by_api_key_success`, `test_by_api_key_not_found`. Added `app/src/triplea/tests/test_views.py`: `test_healthz_returns_200`, `test_home_view_returns_200`. |
+| 7 | `.env.example` | ✅ Done | Created at repo root with all required env vars. Deployment runbook remains deferred. |
+
+---
+
 ## Deferred: P3 (documented only)
 
 1. **Cross-request permission caching** — Use Django's cache backend (`django.core.cache`) for caching permission check results across requests. Configure via Django's `CACHES` setting (Redis, Memcached, DB — never talk to Redis directly). Invalidate on role/permission mutations. This builds on the request-scoped cache added in P1.

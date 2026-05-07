@@ -162,6 +162,21 @@ OAUTH2_PROVIDER = {
 
 SESSION_COOKIE_NAME = "tripleasessionid"
 
+# We need a distributed cache for production
+if not DEBUG:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
+            "LOCATION": env.str("MEMCACHED_LOCATION", "localhost:11211"),
+            "KEY_PREFIX": env.str("MEMCACHED_KEY_PREFIX", "inventory"),
+        }
+    }
+
+    # Session. Cached database is best.
+    SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
+RATELIMIT_USE_CACHE = "default"
+
 MEDIA_ROOT = env.str("MEDIA_ROOT", "")
 STATIC_ROOT = env.str("STATIC_ROOT", "")
 
@@ -201,3 +216,20 @@ EMAIL_BACKEND = env.str("EMAIL_BACKEND", 'triplea.mail.backends.CeleryFileBacken
 EMAIL_FILE_PATH = '/tmp/app-messages'
 AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID", 'YOUR-ACCESS-KEY-ID')
 AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY", 'YOUR-SECRET-ACCESS-KEY')
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "triplea.audit": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+}

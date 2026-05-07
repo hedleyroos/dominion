@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID
 
 from asgiref.sync import sync_to_async
@@ -12,6 +13,7 @@ from triplea_api.utils import paginate_result
 
 
 ITEM_NOT_FOUND = "Item not found for id: {}."
+logger = logging.getLogger("triplea.audit")
 
 
 async def post(body, user, token_info, **kwargs):
@@ -63,6 +65,7 @@ async def post(body, user, token_info, **kwargs):
             return {"message": e.messages[0]}, 422
 
     obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    logger.debug("action=create object_type=UserDomainRole object_id=%s user=%s", obj.id, user.pk)
     return await UserDomainRoleSerializer(instance=obj).adata, 201
 
 
@@ -144,6 +147,7 @@ async def put(id, body, user, token_info, **kwargs):
             return {"message": e.messages[0]}, 422
 
     obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
+    logger.debug("action=update object_type=UserDomainRole object_id=%s user=%s", obj.id, user.pk)
     return await UserDomainRoleSerializer(instance=obj).adata, 200
 
 
@@ -165,6 +169,7 @@ async def delete(id, user, token_info, **kwargs):
             "message": "Cannot delete item because other items are dependent on it. You must delete those items first."
         }, 422
 
+    logger.debug("action=delete object_type=UserDomainRole object_id=%s user=%s", id, user.pk)
     return {"message": "Item deleted successfully"}, 204
 
 

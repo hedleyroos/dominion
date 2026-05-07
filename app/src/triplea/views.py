@@ -1,11 +1,17 @@
 import datetime
 
-from django.views.generic import TemplateView
+from django.http import HttpResponse
+from django.views.generic import TemplateView, View
 from oauth2_provider.views import AuthorizationView as BaseAuthorizationView
 
 
 class HomeView(TemplateView):
     template_name = "triplea/home.html"
+
+
+class HealthView(View):
+    def get(self, request, *args, **kwargs):
+        return HttpResponse("ok")
 
 
 class AuthorizationView(BaseAuthorizationView):

@@ -1,9 +1,13 @@
 from django.contrib.auth import get_user_model
 
 from triplea.serializers import UserSerializer
+from triplea_api.utils import check_rate_limit
 
 
 async def get(api_key, **kwargs):
+    if await check_rate_limit("user_by_api_key", "30/m"):
+        return {"message": "Too many requests."}, 429
+
     User = get_user_model()
 
     user = await User.objects.filter(api_key=api_key).afirst()

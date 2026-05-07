@@ -7,7 +7,9 @@ services:
       DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
       CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
       CELERY_BACKEND: redis://redis:6379/3
-      DEBUG: "true"
+      MEMCACHED_LOCATION: memcached:11211
+      MEMCACHED_KEY_PREFIX: triplea
+      DEBUG: "false"
     depends_on:
       postgres:
         condition: service_healthy
@@ -15,6 +17,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      memcached:
+        condition: service_started
 
   worker:
     build: .
@@ -60,6 +64,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  memcached:
+    image: localhost:5000/memcached:1-alpine
 
 volumes:
   postgres_data:
