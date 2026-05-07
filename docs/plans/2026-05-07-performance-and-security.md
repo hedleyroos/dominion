@@ -51,8 +51,8 @@ All items below were implemented and verified (`tox` green) in the follow-up ses
 | # | Item | Status | Notes |
 |---|------|--------|-------|
 | 1 | Cookie expiry bug | ✅ Done | `middleware.py` now calls `delete_cookie()` on the authenticated branch; test updated to assert `max-age == 0`. |
-| 2 | Rate limiting | ✅ Done | Added `django-ratelimit 4.1.0`. Login (10/5m), register (5/h), by-api-key (30/m) via `is_ratelimited` in async Connexion endpoints; Django `LoginView` and `RegistrationView` wrapped with `ratelimit(key="ip", block=True)` decorator. `CACHES` configured to use Redis (`REDIS_URL` env var) in production and `LocMemCache` in development/tests (when `REDIS_URL` is unset). `RATELIMIT_USE_CACHE = "default"` added to `settings.py`. |
-| 3 | Audit logging | ✅ Done | Added `LOGGING` config in `settings.py` (handler: `StreamHandler`, logger: `triplea.audit` at `INFO`). Added `logger.info("action=... object_type=... object_id=... user=...")` calls on successful create/update/delete in `userdomainrole.py`, `userresourcerole.py`, `domainrolepermission.py`, `resourcerolepermission.py`. |
+| 2 | Rate limiting | ✅ Done | Added `django-ratelimit 4.1.0`. Login (10/5m), register (5/h), by-api-key (30/m) via `is_ratelimited` in async Connexion endpoints; Django `LoginView` and `RegistrationView` wrapped with `ratelimit(key="ip", block=True)` decorator. `CACHES` configured with Memcached in production (when `DEBUG=False`) and Django's default `LocMemCache` in development/tests. `RATELIMIT_USE_CACHE = "default"` added to `settings.py`. |
+| 3 | Audit logging | ✅ Done | Added `LOGGING` config in `settings.py` (handler: `StreamHandler`, logger: `triplea.audit` at `DEBUG`). Added `logger.debug("action=... object_type=... object_id=... user=...")` calls on successful create/update/delete in `userdomainrole.py`, `userresourcerole.py`, `domainrolepermission.py`, `resourcerolepermission.py`. |
 | 4 | Docker image | ✅ Done | Multi-stage build: `builder` stage installs deps; `final` stage uses `python:3.12-slim` with only `libpq5`, creates non-root `appuser`, copies deps from builder. `HEALTHCHECK` calls `/healthz`. `HealthView` added to `views.py` and `urls.py`. |
 | 5 | Gunicorn workers | ⏸ Deferred | `run-gunicorn.sh` is for local dev only. Left as-is per user instruction. |
 | 6 | Test coverage | ✅ Done | Added tests in `test_api.py`: `test_access_domain_permission_allowed`, `test_access_domain_permission_denied_no_check_access`, `test_login_no_matching_email`, `test_login_with_email`, `test_login_wrong_password`, `test_by_api_key_success`, `test_by_api_key_not_found`. Added `app/src/triplea/tests/test_views.py`: `test_healthz_returns_200`, `test_home_view_returns_200`. |
@@ -60,17 +60,20 @@ All items below were implemented and verified (`tox` green) in the follow-up ses
 
 ---
 
-## Deferred: P3 (documented only)
+## Implemented: P3 (phase three session)
 
-1. **Cross-request permission caching** — Use Django's cache backend (`django.core.cache`) for caching permission check results across requests. Configure via Django's `CACHES` setting (Redis, Memcached, DB — never talk to Redis directly). Invalidate on role/permission mutations. This builds on the request-scoped cache added in P1.
+All items below were implemented and verified (`tox` green):
 
-2. **Full pickle → JSON migration for email model** — Replace the `pickled BinaryField` with individual structured columns (`subject`, `body`, `from_email`, `to`, `cc`, `bcc`, `reply_to`, `headers`). Requires a schema migration and a data migration that unpickles existing rows. The minimum fix (try/except) in this phase reduces but does not eliminate the RCE surface.
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | Cross-request permission caching | ✅ Done | `utils.py` uses `django.core.cache` (Memcached in production, LocMem in dev) with versioned keys (TTL 300s). `invalidate_user_permissions(user_id)` and `invalidate_rules_permissions()` called on all relevant mutations in `userdomainrole.py`, `userresourcerole.py`, `domainrolepermission.py`, `resourcerolepermission.py`. |
+| 2 | Full pickle → structured fields for email model | ✅ Done | `EmailMessage` now has `subject`, `body`, `from_email`, `to`, `cc`, `bcc`, `reply_to`, `headers` fields. Three migrations: 0004 adds fields, 0005 data-migrates from pickle, 0006 removes `pickled` column. `mail/backends.py` writes structured fields; `mail/tasks.py` reconstructs `DjangoEmailMessage` from them. |
+| 3 | Counter-cache limit checks (replace probabilistic) | ✅ Done | `Domain` has `descendant_count` and `resource_count` (PositiveIntegerField). Maintained by `post_save`/`post_delete` signals using `F()` expressions for atomic increments. `Domain.clean()` and `Resource.clean()` read these counters instead of doing probabilistic `count()` queries. |
+| 4 | Sync utility variants for admin/OAuth | ✅ Done | `get_user_domains_sync`, `_get_domain_roles_sync`, `_get_domain_permissions_sync`, `_get_resource_roles_sync`, `_get_resource_permissions_sync`, `domain_roles_permissions_mapping_sync`, `resource_roles_permissions_mapping_sync` — used by `admin_views.py` and `oauth_validators.py` instead of `async_to_sync` wrappers. Shared helpers extracted for CTE query, inherit-default, and mapping row building. |
 
-3. **Probabilistic limit checks** — `Domain.clean` and `Resource.clean` use `randint(1, limit/10) == 1` sampling, meaning the limit can be exceeded 10× (domains) or 1000× (resources) before detection. Replace with a counter cache on the parent model using `F()` expressions for atomic increments.
+## Deferred: remaining items
 
-4. **Async view migration** — The groundwork (ASGI app, `@django()` decorator, pytest-asyncio) is in place. Migrate API views from WSGI-sync to ASGI-async for better throughput under high concurrency.
-
-5. **`async_to_sync` in admin and OAuth validator** — `admin_views.py` and `oauth_validators.py` call async utils via `async_to_sync`, blocking the WSGI thread. The admin views should be converted to async CBVs (Django 5.2+) or given sync utility variants. The OAuth validator's `get_user_domains` call should use a sync variant backed by the sync ORM so it does not pay the event-loop overhead.
+1. **Async view migration** — The groundwork (ASGI app, pytest-asyncio) is in place. Migrate API views from WSGI-sync to ASGI-async for better throughput under high concurrency.
 
 ---
 

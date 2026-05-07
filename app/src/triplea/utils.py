@@ -58,6 +58,45 @@ async def invalidate_rules_permissions() -> None:
     await django_cache.adelete(_RULES_VER_KEY)
 
 
+# ---------------------------------------------------------------------------
+# Shared helper functions
+# ---------------------------------------------------------------------------
+
+def _get_user_domains_recursive_ids(domain_ids: list[str]) -> list[str]:
+    """Return IDs of descendant domains reachable from *domain_ids* via parent chain."""
+    placeholders = ",".join(["%s"] * len(domain_ids))
+    query = f"""
+    WITH RECURSIVE children (id) AS (
+    SELECT triplea_domain.id FROM triplea_domain WHERE id IN ({placeholders})
+      UNION ALL
+    SELECT triplea_domain.id FROM children, triplea_domain
+      WHERE triplea_domain.parent_id = children.id
+    )
+    SELECT triplea_domain.id
+    FROM triplea_domain, children WHERE children.id = triplea_domain.id
+    """
+    return [o.id for o in models.Domain.objects.raw(query, domain_ids)]
+
+
+def _set_default_inherit(items: list) -> None:
+    """Ensure every item has .inherit=True if not already set."""
+    for item in items:
+        if not hasattr(item, "inherit"):
+            item.inherit = True
+
+
+def _build_role_permission_mapping(roles: list, permissions: list, active_pairs: set) -> list:
+    """Build [[permission, {role_info}, ...], ...] for admin matrix views."""
+    rows = []
+    for permission in permissions:
+        row = [permission]
+        for role in roles:
+            active = (role.id, permission.id) in active_pairs
+            row.append({"permission": permission, "active": active, "role": role})
+        rows.append(row)
+    return rows
+
+
 # The queries are complex because the role and permission mappings on domain and resources are sparse to avoid
 # database bloat. Resources live within resources, and the top level resource lives in a domain, and
 # domains live within domains. This module therefore has a lot of recursive functions.
@@ -269,18 +308,7 @@ async def get_user_domains(user):
         o.hex async for o in models.UserDomainRole.objects.filter(user=user).values_list("domain_id", flat=True)
     ]))
     if domain_ids:
-        placeholders = ",".join(["%s"] * len(domain_ids))
-        query = f"""
-        WITH RECURSIVE children (id) AS (
-        SELECT triplea_domain.id FROM triplea_domain WHERE id IN ({placeholders})
-          UNION ALL
-        SELECT triplea_domain.id FROM children, triplea_domain
-          WHERE triplea_domain.parent_id = children.id
-        )
-        SELECT triplea_domain.id
-        FROM triplea_domain, children WHERE children.id = triplea_domain.id
-        """
-        recursive_ids = await sync_to_async(lambda: [o.id for o in models.Domain.objects.raw(query, domain_ids)])()
+        recursive_ids = await sync_to_async(_get_user_domains_recursive_ids)(domain_ids)
         return models.Domain.objects.filter(
             id__in=domain_ids + recursive_ids
         ).select_related("parent").order_by("title")
@@ -313,30 +341,20 @@ async def get_domain_permissions(domain):
                 found.append(obj.permission)
         parent = parent.parent
 
-    # Inherit defaults to true
-    for item in found:
-        if not hasattr(item, "inherit"):
-            item.inherit = True
-
+    _set_default_inherit(found)
     return sorted(found, key=lambda item: item.code)
 
 
 async def domain_roles_permissions_mapping(domain):
     """Mapping structure used by views.
     """
-    rows = []
     roles = await get_domain_roles(domain)
+    permissions = await get_domain_permissions(domain)
     active_pairs = {
         (obj.role_id, obj.permission_id)
         async for obj in models.DomainRolePermission.objects.filter(domain=domain)
     }
-    for permission in await get_domain_permissions(domain):
-        row = [permission]
-        for role in roles:
-            active = (role.id, permission.id) in active_pairs
-            row.append({"permission": permission, "active": active, "role": role})
-        rows.append(row)
-    return rows
+    return _build_role_permission_mapping(roles, permissions, active_pairs)
 
 
 async def get_resource_roles(resource):
@@ -375,30 +393,20 @@ async def get_resource_permissions(resource):
         if permission not in found:
             found.append(permission)
 
-    # Inherit defaults to true
-    for item in found:
-        if not hasattr(item, "inherit"):
-            item.inherit = True
-
+    _set_default_inherit(found)
     return sorted(found, key=lambda item: item.code)
 
 
 async def resource_roles_permissions_mapping(resource):
     """Mapping structure used by views.
     """
-    rows = []
     roles = await get_resource_roles(resource)
+    permissions = await get_resource_permissions(resource)
     active_pairs = {
         (obj.role_id, obj.permission_id)
         async for obj in models.ResourceRolePermission.objects.filter(resource=resource)
     }
-    for permission in await get_resource_permissions(resource):
-        row = [permission]
-        for role in roles:
-            active = (role.id, permission.id) in active_pairs
-            row.append({"permission": permission, "active": active, "role": role})
-        rows.append(row)
-    return rows
+    return _build_role_permission_mapping(roles, permissions, active_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -416,18 +424,7 @@ def get_user_domains_sync(user):
     })
     if not domain_ids:
         return models.Domain.objects.none()
-    placeholders = ",".join(["%s"] * len(domain_ids))
-    query = f"""
-    WITH RECURSIVE children (id) AS (
-    SELECT triplea_domain.id FROM triplea_domain WHERE id IN ({placeholders})
-      UNION ALL
-    SELECT triplea_domain.id FROM children, triplea_domain
-      WHERE triplea_domain.parent_id = children.id
-    )
-    SELECT triplea_domain.id
-    FROM triplea_domain, children WHERE children.id = triplea_domain.id
-    """
-    recursive_ids = [o.id for o in models.Domain.objects.raw(query, domain_ids)]
+    recursive_ids = _get_user_domains_recursive_ids(domain_ids)
     return models.Domain.objects.filter(
         id__in=domain_ids + recursive_ids
     ).select_related("parent").order_by("title")
@@ -456,27 +453,19 @@ def _get_domain_permissions_sync(domain):
             if obj.permission not in found:
                 found.append(obj.permission)
         parent = parent.parent
-    for item in found:
-        if not hasattr(item, "inherit"):
-            item.inherit = True
+    _set_default_inherit(found)
     return sorted(found, key=lambda item: item.code)
 
 
 def domain_roles_permissions_mapping_sync(domain):
     """Synchronous variant of domain_roles_permissions_mapping for admin views."""
-    rows = []
     roles = _get_domain_roles_sync(domain)
+    permissions = _get_domain_permissions_sync(domain)
     active_pairs = {
         (obj.role_id, obj.permission_id)
         for obj in models.DomainRolePermission.objects.filter(domain=domain)
     }
-    for permission in _get_domain_permissions_sync(domain):
-        row = [permission]
-        for role in roles:
-            active = (role.id, permission.id) in active_pairs
-            row.append({"permission": permission, "active": active, "role": role})
-        rows.append(row)
-    return rows
+    return _build_role_permission_mapping(roles, permissions, active_pairs)
 
 
 def _get_resource_roles_sync(resource):
@@ -510,25 +499,17 @@ def _get_resource_permissions_sync(resource):
     for permission in _get_domain_permissions_sync(domain):
         if permission not in found:
             found.append(permission)
-    for item in found:
-        if not hasattr(item, "inherit"):
-            item.inherit = True
+    _set_default_inherit(found)
     return sorted(found, key=lambda item: item.code)
 
 
 def resource_roles_permissions_mapping_sync(resource):
     """Synchronous variant of resource_roles_permissions_mapping for admin views."""
-    rows = []
     roles = _get_resource_roles_sync(resource)
+    permissions = _get_resource_permissions_sync(resource)
     active_pairs = {
         (obj.role_id, obj.permission_id)
         for obj in models.ResourceRolePermission.objects.filter(resource=resource)
     }
-    for permission in _get_resource_permissions_sync(resource):
-        row = [permission]
-        for role in roles:
-            active = (role.id, permission.id) in active_pairs
-            row.append({"permission": permission, "active": active, "role": role})
-        rows.append(row)
-    return rows
+    return _build_role_permission_mapping(roles, permissions, active_pairs)
 

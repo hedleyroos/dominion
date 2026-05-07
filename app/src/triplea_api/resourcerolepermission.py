@@ -17,8 +17,6 @@ from triplea.utils import user_has_permission_for_resource, invalidate_rules_per
 ITEM_NOT_FOUND = "Item not found for id: {}."
 logger = logging.getLogger("triplea.audit")
 
-ITEM_NOT_FOUND = "Item not found for id: {}."
-
 
 async def post(body, user, token_info, **kwargs):
     user = token_info["user"]
