@@ -7,7 +7,8 @@ from django.db.models.deletion import ProtectedError
 
 from triplea.models import Role, UserResourceRole
 from triplea.serializers import UserResourceRoleSerializer
-from triplea.utils import user_has_permission_for_resource, invalidate_user_permissions
+from triplea.utils import user_has_permission_for_resource, invalidate_user_permissions, get_user_resources
+from triplea_api.utils import paginate_result
 
 
 ITEM_NOT_FOUND = "Item not found for id: {}."
@@ -176,6 +177,10 @@ async def delete(id, user, token_info, **kwargs):
 
 
 async def search(user, token_info, **kwargs):
-    # Resources can be arbitrarily many. Not implemented.
-    raise NotImplementedError
+    user = token_info["user"]
+    user_resources = await get_user_resources(user)
+    return await paginate_result(
+        UserResourceRole.objects.filter(resource__in=user_resources).select_related("role", "resource", "user"),
+        UserResourceRoleSerializer
+    )
 

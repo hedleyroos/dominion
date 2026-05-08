@@ -1019,6 +1019,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/AccessResult"
+                "400":
+                    description: Bad request (invalid UUID or domain not found)
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                "403":
+                    description: Caller lacks check_access permission on the domain
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
 
     /access/resource/permission/{user_id}/{resource_id}/{permission}:
         get:
@@ -1056,6 +1068,18 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/AccessResult"
+                "400":
+                    description: Bad request (invalid UUID or resource not found)
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                "403":
+                    description: Caller lacks check_access permission on the resource
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
 
 components:
 

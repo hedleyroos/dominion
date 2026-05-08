@@ -280,8 +280,8 @@ class ResourcePermission(models.Model):
 
 class UserDomainRole(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    domain = models.ForeignKey(Domain, null=False, blank=False, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, db_index=True)
+    domain = models.ForeignKey(Domain, null=False, blank=False, on_delete=models.CASCADE, db_index=True)
     role = models.ForeignKey(Role, null=False, blank=False, on_delete=models.PROTECT)
 
     class Meta:
@@ -293,8 +293,8 @@ class UserDomainRole(models.Model):
 
 class UserResourceRole(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    resource = models.ForeignKey(Resource, null=False, blank=False, on_delete=models.CASCADE)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, db_index=True)
+    resource = models.ForeignKey(Resource, null=False, blank=False, on_delete=models.CASCADE, db_index=True)
     role = models.ForeignKey(Role, null=False, blank=False, on_delete=models.PROTECT)
 
     class Meta:
