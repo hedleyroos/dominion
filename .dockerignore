@@ -1,0 +1,10 @@
+ve/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.git/
+.tox/
+db.sqlite3
+*.log
+*.patch
