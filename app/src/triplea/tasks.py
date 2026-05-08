@@ -12,4 +12,4 @@ def vacuum():
     """
     start = timezone.now() - timedelta(days=7)
     User = get_user_model()
-    User.objects.filter(active=False, activation_date__isnull=True, date_joined__lte=start).delete()
+    User.objects.filter(is_active=False, activation_date__isnull=True, date_joined__lte=start).delete()

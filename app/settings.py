@@ -26,7 +26,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-^r#(8oga*$i%x7#-xd*et27oqihs*a5b84&ms@@aez9xhu7a7%"
+# Override SECRET_KEY via environment variable in production.
+SECRET_KEY = env.str("SECRET_KEY", "django-insecure-^r#(8oga*$i%x7#-xd*et27oqihs*a5b84&ms@@aez9xhu7a7%")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", True)
@@ -161,6 +162,21 @@ OAUTH2_PROVIDER = {
 
 SESSION_COOKIE_NAME = "tripleasessionid"
 
+# We need a distributed cache for production
+if not DEBUG:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
+            "LOCATION": env.str("MEMCACHED_LOCATION", "localhost:11211"),
+            "KEY_PREFIX": env.str("MEMCACHED_KEY_PREFIX", "inventory"),
+        }
+    }
+
+    # Session. Cached database is best.
+    SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+
+RATELIMIT_USE_CACHE = "default"
+
 MEDIA_ROOT = env.str("MEDIA_ROOT", "")
 STATIC_ROOT = env.str("STATIC_ROOT", "")
 
@@ -195,15 +211,25 @@ CELERY_BEAT_SCHEDULE = {
 ACCOUNT_ACTIVATION_DAYS = 7
 REGISTRATION_SALT = "triplea-salt-here"
 
-# The database adapter needs work in case of using pypy
-try:
-    import psycopg2
-except ImportError:
-    from psycopg2cffi import compat
-    compat.register()
-
 # Mail settings. See Django docs and mail.backends for options.
 EMAIL_BACKEND = env.str("EMAIL_BACKEND", 'triplea.mail.backends.CeleryFileBackend')
 EMAIL_FILE_PATH = '/tmp/app-messages'
 AWS_ACCESS_KEY_ID = env.str("AWS_ACCESS_KEY_ID", 'YOUR-ACCESS-KEY-ID')
 AWS_SECRET_ACCESS_KEY = env.str("AWS_SECRET_ACCESS_KEY", 'YOUR-SECRET-ACCESS-KEY')
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "triplea.audit": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+}

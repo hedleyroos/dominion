@@ -1,21 +1,24 @@
+import logging
 from uuid import UUID
 
+from asgiref.sync import sync_to_async
+from connexion import request
 from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
-from flask import request
 
 from triplea_api.constants import DEFAULT_ROLES_Q, DEFAULT_PERMISSIONS_Q
 from triplea_api.utils import paginate_result
 from triplea.models import Role, Permission, Resource, ResourceRolePermission, ResourcePermission
 from triplea.serializers import ResourceRolePermissionSerializer
-from triplea.utils import user_has_permission_for_resource
+from triplea.utils import user_has_permission_for_resource, invalidate_rules_permissions
 
 
 ITEM_NOT_FOUND = "Item not found for id: {}."
+logger = logging.getLogger("triplea.audit")
 
 
-def post(body, user, token_info, **kwargs):
+async def post(body, user, token_info, **kwargs):
     user = token_info["user"]
 
     # Resource
@@ -25,24 +28,25 @@ def post(body, user, token_info, **kwargs):
     except ValueError:
         return {"message": "%s is not a valid UUID." % resource_id}, 400
 
-    if not user_has_permission_for_resource(user.pk, "create", resource_id):
+    if not await user_has_permission_for_resource(user.pk, "create", resource_id):
         return {
             "message": "You do not have permission to create this item for this resource."
         }, 403
 
     try:
-        resource = Resource.objects.get(id=resource_id)
+        resource = await Resource.objects.select_related("domain__parent").aget(id=resource_id)
     except Resource.DoesNotExist:
-        return {"message": ITEM_NOT_FOUND.format(id)}, 404
+        return {"message": ITEM_NOT_FOUND.format(resource_id)}, 404
 
     body["resource_id"] = resource_id
 
     # Role
     role_code = body.pop("role")
+    resource_domain_root = await sync_to_async(lambda: resource.domain.root)()
     try:
-        role = Role.objects.filter(
-            Q(domain=resource.domain.root)|DEFAULT_ROLES_Q
-        ).get(code=role_code)
+        role = await Role.objects.filter(
+            Q(domain=resource_domain_root) | DEFAULT_ROLES_Q
+        ).aget(code=role_code)
     except Role.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(role_code)}, 404
     body["role_id"] = role.id
@@ -50,9 +54,9 @@ def post(body, user, token_info, **kwargs):
     # Permission
     permission_code = body.pop("permission")
     try:
-        permission = Permission.objects.filter(
-            Q(domain=resource.domain.root)|DEFAULT_PERMISSIONS_Q
-        ).get(code=permission_code)
+        permission = await Permission.objects.filter(
+            Q(domain=resource_domain_root) | DEFAULT_PERMISSIONS_Q
+        ).aget(code=permission_code)
     except Permission.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(permission_code)}, 404
     body["permission_id"] = permission.id
@@ -63,7 +67,7 @@ def post(body, user, token_info, **kwargs):
     # This provides us with clean error messages.
     try:
         obj = ResourceRolePermission(**body)
-        obj.full_clean()
+        await sync_to_async(obj.full_clean)()
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
@@ -72,7 +76,7 @@ def post(body, user, token_info, **kwargs):
 
     # Actually create and persist an object
     try:
-        obj = ResourceRolePermission.objects.create(**body)
+        obj = await ResourceRolePermission.objects.acreate(**body)
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
@@ -81,43 +85,47 @@ def post(body, user, token_info, **kwargs):
 
     # If inherit is set to false then we create an extra object
     if not inherit:
-        ResourcePermission.objects.create(resource=obj.resource, permission=obj.permission, inherit=False)
+        await ResourcePermission.objects.acreate(resource_id=obj.resource_id, permission_id=obj.permission_id, inherit=False)
 
-    return ResourceRolePermissionSerializer(instance=obj).data, 201
+    obj = await ResourceRolePermission.objects.select_related("role", "permission", "resource").aget(id=obj.id)
+    await invalidate_rules_permissions()
+    logger.debug("action=create object_type=ResourceRolePermission object_id=%s user=%s", obj.id, user.pk)
+    return await ResourceRolePermissionSerializer(instance=obj).adata, 201
 
 
-def get(id, user, token_info, **kwargs):
+async def get(id, user, token_info, **kwargs):
     user = token_info["user"]
 
     try:
-        obj = ResourceRolePermission.objects.get(id=id)
-    except Role.DoesNotExist:
-        return {"message": ITEM_NOT_FOUND.format(id)}, 404
-
-    if not user_has_permission_for_resource(user.pk, "read", obj.resource_id):
-        return {"message": "You do not have permission to read this item."}, 403
-
-    return ResourceRolePermissionSerializer(instance=obj).data, 200
-
-
-def put(id, body, user, token_info, **kwargs):
-    user = token_info["user"]
-
-    try:
-        obj = ResourceRolePermission.objects.get(id=id)
+        obj = await ResourceRolePermission.objects.select_related("role", "permission", "resource").aget(id=id)
     except ResourceRolePermission.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(id)}, 404
 
-    if not user_has_permission_for_resource(user.pk, "update", obj.resource_id):
+    if not await user_has_permission_for_resource(user.pk, "read", obj.resource_id):
+        return {"message": "You do not have permission to read this item."}, 403
+
+    return await ResourceRolePermissionSerializer(instance=obj).adata, 200
+
+
+async def put(id, body, user, token_info, **kwargs):
+    user = token_info["user"]
+
+    try:
+        obj = await ResourceRolePermission.objects.select_related("resource__domain__parent", "role", "permission").aget(id=id)
+    except ResourceRolePermission.DoesNotExist:
+        return {"message": ITEM_NOT_FOUND.format(id)}, 404
+
+    if not await user_has_permission_for_resource(user.pk, "update", obj.resource_id):
         return {"message": "You do not have permission to update this item."}, 403
 
     # Role
     role_code = body.pop("role", None)
     if role_code:
+        resource_domain_root = await sync_to_async(lambda: obj.resource.domain.root)()
         try:
-            role = Role.objects.filter(
-                Q(domain=obj.resource.domain.root)|DEFAULT_ROLES_Q
-            ).get(code=role_code)
+            role = await Role.objects.filter(
+                Q(domain=resource_domain_root) | DEFAULT_ROLES_Q
+            ).aget(code=role_code)
         except Role.DoesNotExist:
             return {"message": ITEM_NOT_FOUND.format(role_code)}, 404
         body["role_id"] = role.id
@@ -125,10 +133,11 @@ def put(id, body, user, token_info, **kwargs):
     # Permission
     permission_code = body.pop("permission", None)
     if permission_code:
+        resource_domain_root = await sync_to_async(lambda: obj.resource.domain.root)()
         try:
-            permission = Permission.objects.filter(
-                Q(domain=obj.resource.domain.root)|DEFAULT_PERMISSIONS_Q
-            ).get(code=permission_code)
+            permission = await Permission.objects.filter(
+                Q(domain=resource_domain_root) | DEFAULT_PERMISSIONS_Q
+            ).aget(code=permission_code)
         except Permission.DoesNotExist:
             return {"message": ITEM_NOT_FOUND.format(permission_code)}, 404
         body["permission_id"] = permission.id
@@ -138,45 +147,49 @@ def put(id, body, user, token_info, **kwargs):
     for k, v in body.items():
         setattr(obj, k, v)
     try:
-        obj.full_clean()
-        obj.save()
+        await sync_to_async(obj.full_clean)()
+        await obj.asave()
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
 
-    # Recreate resource permission if applicable
-    # TODO: optimize to avoid the forced delete
-    ResourcePermission.objects.filter(resource=obj.resource, permission=obj.permission).delete()
+    # Recreate resource permission if applicable.
+    await ResourcePermission.objects.filter(resource_id=obj.resource_id, permission_id=obj.permission_id).adelete()
     if not inherit:
-        ResourcePermission.objects.create(resource=obj.resource, permission=obj.permission, inherit=False)
+        await ResourcePermission.objects.acreate(resource_id=obj.resource_id, permission_id=obj.permission_id, inherit=False)
 
-    return ResourceRolePermissionSerializer(instance=obj).data, 200
+    obj = await ResourceRolePermission.objects.select_related("role", "permission", "resource").aget(id=obj.id)
+    await invalidate_rules_permissions()
+    logger.debug("action=update object_type=ResourceRolePermission object_id=%s user=%s", obj.id, user.pk)
+    return await ResourceRolePermissionSerializer(instance=obj).adata, 200
 
 
-def delete(id, user, token_info, **kwargs):
+async def delete(id, user, token_info, **kwargs):
     user = token_info["user"]
 
     try:
-        obj = ResourceRolePermission.objects.get(id=id)
+        obj = await ResourceRolePermission.objects.aget(id=id)
     except ResourceRolePermission.DoesNotExist:
         return {"message": ITEM_NOT_FOUND.format(id)}, 404
 
-    if not user_has_permission_for_resource(user.pk, "delete", obj.resource_id):
+    if not await user_has_permission_for_resource(user.pk, "delete", obj.resource_id):
         return {"message": "You do not have permission to delete this item."}, 403
 
     try:
-        obj.delete()
+        await obj.adelete()
     except ProtectedError:
         return {
             "message": "Cannot delete item because other items are dependent on it. You must delete those items first."
         }, 422
 
+    await invalidate_rules_permissions()
+    logger.debug("action=delete object_type=ResourceRolePermission object_id=%s user=%s", id, user.pk)
     return {"message": "Item deleted successfully"}, 204
 
 
-def search(user, token_info, **kwargs):
+async def search(user, token_info, **kwargs):
     user = token_info["user"]
 
     # Resource is a required parameter
@@ -186,7 +199,11 @@ def search(user, token_info, **kwargs):
     except ValueError:
         return {"message": "%s is not a valid UUID." % resource_id}, 400
 
-    if not user_has_permission_for_resource(user.pk, "read", resource_id):
+    if not await user_has_permission_for_resource(user.pk, "read", resource_id):
         return {"message": "You do not have permission to read this item."}, 403
 
-    return paginate_result(ResourceRolePermission.objects.filter(resource_id=resource_id), ResourceRolePermissionSerializer, request)
+    return await paginate_result(
+        ResourceRolePermission.objects.filter(resource_id=resource_id).select_related("role", "permission", "resource"),
+        ResourceRolePermissionSerializer
+    )
+

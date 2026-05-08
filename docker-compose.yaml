@@ -1,0 +1,82 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
+      CELERY_BACKEND: redis://redis:6379/3
+      MEMCACHED_LOCATION: memcached:11211
+      MEMCACHED_KEY_PREFIX: triplea
+      DEBUG: "false"
+      SECRET_KEY: dockerperftesting123
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      memcached:
+        condition: service_started
+
+  worker:
+    build: .
+    command: ["python", "-m", "celery", "-A", "app.celery", "worker", "--loglevel=info"]
+    environment:
+      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
+      CELERY_BACKEND: redis://redis:6379/3
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    image: localhost:5000/library/postgres:16-alpine
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: triplea
+      POSTGRES_PASSWORD: triplea
+      POSTGRES_DB: triplea
+    command: >
+      postgres
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c work_mem=64MB
+      -c maintenance_work_mem=512MB
+      -c max_wal_size=4GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=64MB
+      -c random_page_cost=1.1
+      -c wal_compression=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U triplea"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: localhost:5000/library/rabbitmq:management-alpine
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: localhost:5000/library/redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  memcached:
+    image: localhost:5000/library/memcached:1-alpine

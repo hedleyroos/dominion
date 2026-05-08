@@ -1,8 +1,8 @@
 from uuid import UUID
 
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from flask import request
 
 from triplea.serializers import UserSerializer
 
@@ -10,17 +10,17 @@ from triplea.serializers import UserSerializer
 ITEM_NOT_FOUND = "Item not found for id: {}."
 
 
-def post(body, user, token_info, **kwargs):
-    user = token_info["user"]
+async def post(body, user, token_info, **kwargs):
+    current_user = token_info["user"]
 
     User = get_user_model()
-    body["created_by"] = user
+    body["created_by"] = current_user
 
     # Create an in-memory object so we can run checks without attempting to save to the database.
     # This provides us with clean error messages.
     try:
         obj = User(**body)
-        obj.full_clean()
+        await sync_to_async(obj.full_clean)()
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
@@ -29,7 +29,7 @@ def post(body, user, token_info, **kwargs):
 
     # Actually create and persist an object
     try:
-        obj = User.objects.create(**body)
+        obj = await User.objects.acreate(**body)
     except ValidationError as e:
         if hasattr(e, "error_dict"):
             return e.message_dict, 422
@@ -37,7 +37,7 @@ def post(body, user, token_info, **kwargs):
             return {"message": e.messages[0]}, 422
 
     # Set password
-    obj.set_password(body["password"])
-    obj.save(update_fields=["password"])
+    await sync_to_async(obj.set_password)(body["password"])
+    await obj.asave(update_fields=["password"])
 
-    return UserSerializer(instance=obj).data, 201
+    return await UserSerializer(instance=obj).adata, 201

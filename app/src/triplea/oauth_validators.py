@@ -3,7 +3,7 @@ import uuid
 from django.contrib.auth import get_user_model
 from oauth2_provider.oauth2_validators import OAuth2Validator
 
-from triplea.utils import get_user_domains
+from triplea.utils import get_user_domains_sync
 
 
 class CustomOAuth2Validator(OAuth2Validator):
@@ -17,13 +17,12 @@ class CustomOAuth2Validator(OAuth2Validator):
         app_user_username = "%s%%%s" % (request.user.username, app_id)
         app_user_email = "%s@triplea.com" % uuid.uuid4()
         User = get_user_model()
-        try:
-            app_user = User.objects.get(username=app_user_username, application_id=app_id)
-        except User.DoesNotExist:
-            app_user = User.objects.create(
-                username=app_user_username, email=app_user_email,
-                application_id=app_id,
-            )
+        app_user, _ = User.objects.get_or_create(
+            username=app_user_username,
+            application_id=app_id,
+            defaults={"email": app_user_email},
+        )
+        user_domains = get_user_domains_sync(app_user)
         return {
             "given_name": request.user.first_name,
             "family_name": request.user.last_name,
@@ -31,7 +30,7 @@ class CustomOAuth2Validator(OAuth2Validator):
             "preferred_username": request.user.username,
             "email": request.user.email,
             "uuid": str(app_user.id),
-            "domains": [{"uuid": str(o.id), "title": o.title} for o in get_user_domains(app_user)],
+            "domains": [{"uuid": str(o.id), "title": o.title} for o in user_domains],
             "api_key": str(app_user.api_key),
         }
 
