@@ -45,8 +45,7 @@ os.environ.setdefault("MEMCACHED_KEY_PREFIX", "perftest")
 # Django bootstrap — must precede any model imports.
 # ---------------------------------------------------------------------------
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + "/app/src")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dominion.conf.settings")
 
 from django.core.wsgi import get_wsgi_application  # noqa: E402
 

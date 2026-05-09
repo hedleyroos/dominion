@@ -23,7 +23,7 @@ services:
 
   worker:
     build: .
-    command: ["python", "-m", "celery", "-A", "app.celery", "worker", "--loglevel=info"]
+    command: ["python", "-m", "celery", "-A", "dominion.conf.celery", "worker", "--loglevel=info"]
     environment:
       DATABASE_URL: postgresql://dominion:dominion@postgres:5432/dominion
       CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//

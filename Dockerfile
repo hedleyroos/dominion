@@ -37,8 +37,8 @@ RUN chmod +x /entrypoint.sh
 RUN chown -R appuser:appuser /app
 USER appuser
 
-ENV DJANGO_SETTINGS_MODULE=app.settings
-ENV PYTHONPATH=/app:/app/app/src
+ENV DJANGO_SETTINGS_MODULE=dominion.conf.settings
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 

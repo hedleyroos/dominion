@@ -11,17 +11,14 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 
-# Adjust path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/app/src')
-
 # Configure Django so the ORM works
 if not settings.configured:
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dominion.conf.settings")
 
 application = get_wsgi_application()
 
 # Create Connexion app
-app = connexion.AsyncApp("main", specification_dir='app/')
+app = connexion.AsyncApp("main", specification_dir='dominion/conf/')
 app.add_middleware(
     CORSMiddleware,
     position=connexion.middleware.MiddlewarePosition.BEFORE_ROUTING,
@@ -32,7 +29,7 @@ app.add_middleware(
 )
 app.add_api(
     'openapi.yaml',
-    resolver=connexion.resolver.RestyResolver('dominion_api'),
+    resolver=connexion.resolver.RestyResolver('dominion.api'),
     strict_validation=True,
 )
 

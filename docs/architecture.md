@@ -56,8 +56,8 @@ tox -e app -- -k test_domaina_read
 
 Views are currently synchronous (WSGI). The groundwork for async is in place:
 
-- `app/asgi.py` exposes a standard ASGI application.
-- `app/src/dominion/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
+- `dominion/conf/asgi.py` exposes a standard ASGI application.
+- `dominion/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
 - `pytest-asyncio` is installed and configured.
 
 Full async view conversion is deferred to a future phase.
@@ -181,17 +181,17 @@ Resource ─────────────── domain FK ──► Domai
 
 ## Authentication
 
-The API supports two authentication methods, declared in `app/openapi.yaml` under `securitySchemes`.
+The API supports two authentication methods, declared in `dominion/conf/openapi.yaml` under `securitySchemes`.
 
 ### HTTP Basic Auth
 
-Handler: `dominion_api.auth.basic_auth(username, password)`
+Handler: `dominion.api.auth.basic_auth(username, password)`
 
 Looks up the user by username, verifies the password with Django's `check_password()`, and returns a token-info dict: `{"uid": username, "scope": "", "user": <User>}`. Returns `None` on failure (Connexion then returns 401).
 
 ### API Key
 
-Handler: `dominion_api.auth.apikey_auth(api_key)`
+Handler: `dominion.api.auth.apikey_auth(api_key)`
 
 The client sends the API key in the `X-Auth` request header. The handler looks up the user by `User.api_key` and returns the same token-info structure. Returns `None` if not found.
 
@@ -251,14 +251,14 @@ Each check may issue multiple recursive SQL queries. There are no caches today; 
 
 ## API Design
 
-The REST API is built with **Connexion**, which maps OpenAPI 3.0 operation IDs to Python functions. The spec lives at `app/openapi.yaml` and is served at `/api/v1.0/`.
+The REST API is built with **Connexion**, which maps OpenAPI 3.0 operation IDs to Python functions. The spec lives at `dominion/conf/openapi.yaml` and is served at `/api/v1.0/`.
 
 ### Conventions
 
 - Each endpoint module (`domain.py`, `resource.py`, etc.) exports functions named `post`, `get`, `put`, `delete`, or `search`.
 - Connexion injects `body` (parsed request body), `user` (authenticated `User` object), and `token_info` (the dict returned by the auth handler).
 - Functions return `(data_dict, http_status_code)` tuples.
-- Pagination is handled by `dominion_api.utils.paginate_result()`. The default page size is 100 (`DOMINION_API_RESULTS_PER_PAGE`).
+- Pagination is handled by `dominion.api.utils.paginate_result()`. The default page size is 100 (`DOMINION_API_RESULTS_PER_PAGE`).
 
 ### Endpoints
 
@@ -350,7 +350,7 @@ The caller must have the `check_access` permission on the target domain or resou
 
 ### Middleware Stack
 
-Defined in `app/settings.py` (`MIDDLEWARE`):
+Defined in `dominion/conf/settings.py` (`MIDDLEWARE`):
 
 1. `SecurityMiddleware`
 2. `SessionMiddleware`
@@ -415,7 +415,7 @@ Failed sends are retried by the `send_unsent_mails` beat task.
 
 ## Async Tasks
 
-### Celery Configuration (`app/celery.py`)
+### Celery Configuration (`dominion/conf/celery.py`)
 
 All config keys use the modern lowercase form (Celery 5+ style).
 
@@ -487,7 +487,7 @@ Unactivated users older than 7 days are removed by the `dominion.tasks.vacuum` C
 
 ## Configuration
 
-Key settings in `app/settings.py`. Most runtime values are read from environment variables via `environs`.
+Key settings in `dominion/conf/settings.py`. Most runtime values are read from environment variables via `environs`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -513,8 +513,8 @@ For PostgreSQL, `CONN_MAX_AGE=60`, `CONN_HEALTH_CHECKS=True`, and `statement_tim
 
 | File | Purpose |
 |------|---------|
-| `app/wsgi.py` | Standard Django WSGI application |
-| `app/asgi.py` | Standard Django ASGI application |
+| `dominion/conf/wsgi.py` | Standard Django WSGI application |
+| `dominion/conf/asgi.py` | Standard Django ASGI application |
 
 ### Startup Scripts
 

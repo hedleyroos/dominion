@@ -1,8 +1,6 @@
 import django
 import os
-import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "app", "src"))
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "dominion.conf.settings")
 
 django.setup()
