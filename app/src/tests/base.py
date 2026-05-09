@@ -1,8 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from triplea import models, create_initial_data
-from triplea.utils import user_has_permission_for_domain, user_has_permission_for_resource
+from dominion import models, create_initial_data
+from dominion.utils import user_has_permission_for_domain, user_has_permission_for_resource
 
 
 """

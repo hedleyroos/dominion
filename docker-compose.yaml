@@ -4,11 +4,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      DATABASE_URL: postgresql://dominion:dominion@postgres:5432/dominion
       CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
       CELERY_BACKEND: redis://redis:6379/3
       MEMCACHED_LOCATION: memcached:11211
-      MEMCACHED_KEY_PREFIX: triplea
+      MEMCACHED_KEY_PREFIX: dominion
       DEBUG: "false"
       SECRET_KEY: dockerperftesting123
     depends_on:
@@ -25,7 +25,7 @@ services:
     build: .
     command: ["python", "-m", "celery", "-A", "app.celery", "worker", "--loglevel=info"]
     environment:
-      DATABASE_URL: postgresql://triplea:triplea@postgres:5432/triplea
+      DATABASE_URL: postgresql://dominion:dominion@postgres:5432/dominion
       CELERY_BROKER: amqp://guest:guest@rabbitmq:5672//
       CELERY_BACKEND: redis://redis:6379/3
       RUN_MIGRATIONS: "false"
@@ -42,9 +42,9 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_USER: triplea
-      POSTGRES_PASSWORD: triplea
-      POSTGRES_DB: triplea
+      POSTGRES_USER: dominion
+      POSTGRES_PASSWORD: dominion
+      POSTGRES_DB: dominion
     command: >
       postgres
       -c shared_buffers=2GB
@@ -57,7 +57,7 @@ services:
       -c random_page_cost=1.1
       -c wal_compression=on
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U triplea"]
+      test: ["CMD-SHELL", "pg_isready -U dominion"]
       interval: 5s
       timeout: 5s
       retries: 5

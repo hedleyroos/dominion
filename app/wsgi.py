@@ -1,5 +1,5 @@
 """
-WSGI config for triplea project.
+WSGI config for dominion project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 

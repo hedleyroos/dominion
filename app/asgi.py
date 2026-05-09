@@ -1,5 +1,5 @@
 """
-ASGI config for triplea project.
+ASGI config for dominion project.
 
 It exposes the ASGI callable as a module-level variable named ``application``.
 

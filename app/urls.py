@@ -1,4 +1,4 @@
-"""triplea URL Configuration
+"""dominion URL Configuration
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/4.0/topics/http/urls/
@@ -16,7 +16,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, re_path, include
 
-from triplea.views import AuthorizationView, HealthView
+from dominion.views import AuthorizationView, HealthView
 
 
 urlpatterns = [
@@ -31,6 +31,6 @@ urlpatterns = [
     path('o/', include('oauth2_provider.urls', namespace='oauth2_provider')),
 
     path("oidc/", include("mozilla_django_oidc.urls")),
-    path('', include('triplea.urls')),
-    path('', include('triplea.registration.urls')),
+    path('', include('dominion.urls')),
+    path('', include('dominion.registration.urls')),
 ]

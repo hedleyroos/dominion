@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""perfload.py — TripleA RBAC performance load test.
+"""perfload.py — Dominion RBAC performance load test.
 
 Subcommands:
     setup   Bulk-create test data via the Django ORM.  Run once; idempotent.
@@ -7,7 +7,7 @@ Subcommands:
     all     setup then run.
 
 Environment:
-    DATABASE_URL        Postgres DSN (default: postgresql://triplea:triplea@localhost:5432/triplea)
+    DATABASE_URL        Postgres DSN (default: postgresql://dominion:dominion@localhost:5432/dominion)
     MEMCACHED_LOCATION  Memcached host:port (default: localhost:11211)
 
     Migrations are handled by the Docker entrypoint; do not run them here.
@@ -34,7 +34,7 @@ import httpx
 # Environment defaults — must be set before Django boots.
 # ---------------------------------------------------------------------------
 
-os.environ.setdefault("DATABASE_URL", "postgresql://triplea:triplea@localhost:5433/triplea")
+os.environ.setdefault("DATABASE_URL", "postgresql://dominion:dominion@localhost:5433/dominion")
 os.environ.setdefault("DEBUG", "False")
 os.environ.setdefault("SECRET_KEY", "perftesting123")
 os.environ.setdefault("MEMCACHED_LOCATION", "localhost:11211")
@@ -55,7 +55,7 @@ get_wsgi_application()
 from django.contrib.auth import get_user_model  # noqa: E402
 from django.db.models import F  # noqa: E402
 
-from triplea.models import (  # noqa: E402
+from dominion.models import (  # noqa: E402
     Domain,
     DomainPermission,
     DomainRolePermission,
@@ -1135,7 +1135,7 @@ async def _run_all_scenarios(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="TripleA performance load test.",
+        description="Dominion performance load test.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

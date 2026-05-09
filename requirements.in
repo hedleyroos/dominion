@@ -1,4 +1,4 @@
-# TripleA top-level dependencies.
+# Dominion top-level dependencies.
 # Compile to requirements.txt with:
 #   pip-compile requirements.in --output-file requirements.txt
 

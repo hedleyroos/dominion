@@ -1,6 +1,6 @@
-# TripleA Architecture
+# Dominion Architecture
 
-TripleA is an API-driven RBAC (Role-Based Access Control) system built in Django. It also acts as an OIDC (OpenID Connect) provider. Clients integrate with TripleA to manage users, organise resources into domain hierarchies, define roles and permissions, and perform access-control checks via a REST API.
+Dominion is an API-driven RBAC (Role-Based Access Control) system built in Django. It also acts as an OIDC (OpenID Connect) provider. Clients integrate with Dominion to manage users, organise resources into domain hierarchies, define roles and permissions, and perform access-control checks via a REST API.
 
 Version: **0.1.14**
 
@@ -57,7 +57,7 @@ tox -e app -- -k test_domaina_read
 Views are currently synchronous (WSGI). The groundwork for async is in place:
 
 - `app/asgi.py` exposes a standard ASGI application.
-- `app/src/triplea/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
+- `app/src/dominion/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
 - `pytest-asyncio` is installed and configured.
 
 Full async view conversion is deferred to a future phase.
@@ -72,8 +72,8 @@ Full async view conversion is deferred to a future phase.
 
 Build:
 ```
-docker build -t triplea:latest .
-docker buildx build --platform linux/amd64,linux/arm64 -t triplea:latest .
+docker build -t dominion:latest .
+docker buildx build --platform linux/amd64,linux/arm64 -t dominion:latest .
 ```
 
 ---
@@ -84,7 +84,7 @@ The RBAC model is built around two independent hierarchies — **domains** and *
 
 ### Core Entities
 
-**User** (`triplea.User`) — extends `AbstractUser`.
+**User** (`dominion.User`) — extends `AbstractUser`.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -94,7 +94,7 @@ The RBAC model is built around two independent hierarchies — **domains** and *
 | `activation_date` | datetime | set when account is activated |
 | `application_id` | int | non-zero for application-scoped users (see OAuth section) |
 
-**Domain** (`triplea.Domain`) — hierarchical organisational unit.
+**Domain** (`dominion.Domain`) — hierarchical organisational unit.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -105,7 +105,7 @@ The RBAC model is built around two independent hierarchies — **domains** and *
 
 A domain tree may contain at most 1,000 descendants per root (checked probabilistically). When a root domain is created via `DomainManager.create()`, a default set of `DomainRolePermission` entries is automatically created and the creating user is assigned the `owner` and `access_checker` roles.
 
-**Role** (`triplea.Role`) — a named role, identified by a string `code`.
+**Role** (`dominion.Role`) — a named role, identified by a string `code`.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -115,7 +115,7 @@ A domain tree may contain at most 1,000 descendants per root (checked probabilis
 
 **System roles** (global, no domain): `anonymous`, `authenticated`, `manager`, `owner`, `access_checker`.
 
-**Permission** (`triplea.Permission`) — a named capability, identified by a string `code`.
+**Permission** (`dominion.Permission`) — a named capability, identified by a string `code`.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -125,7 +125,7 @@ A domain tree may contain at most 1,000 descendants per root (checked probabilis
 
 **System permissions** (global): `create`, `read`, `update`, `delete`, `check_access`, `manage_roles`, `view`.
 
-**Resource** (`triplea.Resource`) — a domain-owned object with a stable identifier.
+**Resource** (`dominion.Resource`) — a domain-owned object with a stable identifier.
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -185,19 +185,19 @@ The API supports two authentication methods, declared in `app/openapi.yaml` unde
 
 ### HTTP Basic Auth
 
-Handler: `triplea_api.auth.basic_auth(username, password)`
+Handler: `dominion_api.auth.basic_auth(username, password)`
 
 Looks up the user by username, verifies the password with Django's `check_password()`, and returns a token-info dict: `{"uid": username, "scope": "", "user": <User>}`. Returns `None` on failure (Connexion then returns 401).
 
 ### API Key
 
-Handler: `triplea_api.auth.apikey_auth(api_key)`
+Handler: `dominion_api.auth.apikey_auth(api_key)`
 
 The client sends the API key in the `X-Auth` request header. The handler looks up the user by `User.api_key` and returns the same token-info structure. Returns `None` if not found.
 
 ### OAuth2 / OIDC
 
-Full OAuth2 and OIDC flows are provided by django-oauth-toolkit with a custom validator (`triplea.oauth_validators.CustomOAuth2Validator`). The authorization endpoint is at `/o/authorize/` (overridden by TripleA's own `AuthorizationView` to handle redirect cookie logic — see Request Pipeline).
+Full OAuth2 and OIDC flows are provided by django-oauth-toolkit with a custom validator (`dominion.oauth_validators.CustomOAuth2Validator`). The authorization endpoint is at `/o/authorize/` (overridden by Dominion's own `AuthorizationView` to handle redirect cookie logic — see Request Pipeline).
 
 **Application-scoped users.** When an OAuth client completes the authorization flow, `get_additional_claims()` in the custom validator creates (or retrieves) a shadow user with the username pattern `{real_username}%{oauth_app_id}` and `application_id` set to the OAuth app's ID. This user has its own `api_key` and its own domain/resource role assignments, sandboxing the application's access from the real user's access.
 
@@ -218,7 +218,7 @@ Silent login is supported: `validate_silent_login()` returns `True` for any auth
 
 ## Authorization & Access Control
 
-Permission checks are implemented in `triplea.utils` and work recursively over the domain and resource trees.
+Permission checks are implemented in `dominion.utils` and work recursively over the domain and resource trees.
 
 ### Domain Permission Check
 
@@ -258,7 +258,7 @@ The REST API is built with **Connexion**, which maps OpenAPI 3.0 operation IDs t
 - Each endpoint module (`domain.py`, `resource.py`, etc.) exports functions named `post`, `get`, `put`, `delete`, or `search`.
 - Connexion injects `body` (parsed request body), `user` (authenticated `User` object), and `token_info` (the dict returned by the auth handler).
 - Functions return `(data_dict, http_status_code)` tuples.
-- Pagination is handled by `triplea_api.utils.paginate_result()`. The default page size is 100 (`TRIPLEA_API_RESULTS_PER_PAGE`).
+- Pagination is handled by `dominion_api.utils.paginate_result()`. The default page size is 100 (`DOMINION_API_RESULTS_PER_PAGE`).
 
 ### Endpoints
 
@@ -332,7 +332,7 @@ The caller must have the `check_access` permission on the target domain or resou
 
 ```
 /admin/                          Django admin
-/o/authorize/                    Custom OAuth2 authorization view (TripleA)
+/o/authorize/                    Custom OAuth2 authorization view (Dominion)
 /o/                              django-oauth-toolkit endpoints
 /oidc/                           mozilla-django-oidc endpoints
 /accounts/register/              User registration (web UI)
@@ -359,11 +359,11 @@ Defined in `app/settings.py` (`MIDDLEWARE`):
 5. `AuthenticationMiddleware`
 6. `MessageMiddleware`
 7. `XFrameOptionsMiddleware`
-8. `triplea.middleware.oauth_complete_process` — custom (see below)
+8. `dominion.middleware.oauth_complete_process` — custom (see below)
 
 ### OAuth Redirect Middleware
 
-`triplea.middleware.oauth_complete_process` manages the redirect cycle around OAuth2 authorization:
+`dominion.middleware.oauth_complete_process` manages the redirect cycle around OAuth2 authorization:
 
 - When a user arrives at `/o/authorize/`, a cookie named `oauth_redirect_next` (365-day expiry) is set to the URL they came from.
 - After authentication, the middleware reads this cookie and redirects back to the original location.
@@ -371,7 +371,7 @@ Defined in `app/settings.py` (`MIDDLEWARE`):
 
 ### Signal Handlers
 
-`triplea.handlers.on_user_activated()` — connected to django-registration's activation signal. Sets `User.activation_date` to `now()` when a user activates their account via the emailed link.
+`dominion.handlers.on_user_activated()` — connected to django-registration's activation signal. Sets `User.activation_date` to `now()` when a user activates their account via the emailed link.
 
 ---
 
@@ -381,7 +381,7 @@ All outbound email is queued through Celery rather than sent inline. The system 
 
 ### Model
 
-`triplea.mail.EmailMessage` — stores each email as a pickled object.
+`dominion.mail.EmailMessage` — stores each email as a pickled object.
 
 | Field | Type |
 |-------|------|
@@ -432,17 +432,17 @@ All config keys use the modern lowercase form (Celery 5+ style).
 
 | Schedule | Task | Expiry |
 |----------|------|--------|
-| Every 5 minutes | `triplea.mail.tasks.send_unsent_mails` | 60 s |
-| Daily at 01:15 UTC | `triplea.mail.tasks.vacuum` | 60 s |
+| Every 5 minutes | `dominion.mail.tasks.send_unsent_mails` | 60 s |
+| Daily at 01:15 UTC | `dominion.mail.tasks.vacuum` | 60 s |
 
 ### Tasks
 
 | Task | What it does |
 |------|-------------|
-| `triplea.mail.tasks.send_mail(email_message_id)` | Unpickle and send one queued email |
-| `triplea.mail.tasks.send_unsent_mails()` | Retry all unsent emails |
-| `triplea.mail.tasks.vacuum()` | Delete email records older than 14 days |
-| `triplea.tasks.vacuum()` | Delete unactivated users older than 7 days |
+| `dominion.mail.tasks.send_mail(email_message_id)` | Unpickle and send one queued email |
+| `dominion.mail.tasks.send_unsent_mails()` | Retry all unsent emails |
+| `dominion.mail.tasks.vacuum()` | Delete email records older than 14 days |
+| `dominion.tasks.vacuum()` | Delete unactivated users older than 7 days |
 
 ---
 
@@ -452,9 +452,9 @@ The Django admin provides a standard CRUD interface for all models. Two custom v
 
 ### Role/Permission Matrix
 
-`DomainManageRolesPermissionsView` and `ResourceManageRolesPermissionsView` (both `UpdateView` subclasses in `triplea.admin_views`) render a checkbox grid with roles as columns and permissions as rows. The grid is built by `domain_roles_permissions_mapping()` / `resource_roles_permissions_mapping()` in `triplea.utils`.
+`DomainManageRolesPermissionsView` and `ResourceManageRolesPermissionsView` (both `UpdateView` subclasses in `dominion.admin_views`) render a checkbox grid with roles as columns and permissions as rows. The grid is built by `domain_roles_permissions_mapping()` / `resource_roles_permissions_mapping()` in `dominion.utils`.
 
-The corresponding form classes (`triplea.admin_forms`) parse submitted field names in the format `role_{role_id}_checkbox_{permission_id}` to create or delete `DomainRolePermission` / `ResourceRolePermission` rows and manage the `inherit` flag on `DomainPermission` / `ResourcePermission`.
+The corresponding form classes (`dominion.admin_forms`) parse submitted field names in the format `role_{role_id}_checkbox_{permission_id}` to create or delete `DomainRolePermission` / `ResourceRolePermission` rows and manage the `inherit` flag on `DomainPermission` / `ResourcePermission`.
 
 ---
 
@@ -462,7 +462,7 @@ The corresponding form classes (`triplea.admin_forms`) parse submitted field nam
 
 ### Web Registration
 
-1. User submits `/accounts/register/` (backed by `triplea.registration.RegistrationView`, which extends django-registration's activation backend).
+1. User submits `/accounts/register/` (backed by `dominion.registration.RegistrationView`, which extends django-registration's activation backend).
 2. An activation email is sent. The account is inactive until the link is clicked.
 3. On activation, `on_user_activated()` sets `User.activation_date`.
 4. The activation window is 7 days (`ACCOUNT_ACTIVATION_DAYS = 7`).
@@ -481,7 +481,7 @@ When an OAuth2 client completes authorization, a shadow user (`{username}%{app_i
 
 ### User Cleanup
 
-Unactivated users older than 7 days are removed by the `triplea.tasks.vacuum` Celery task, run daily.
+Unactivated users older than 7 days are removed by the `dominion.tasks.vacuum` Celery task, run daily.
 
 ---
 
@@ -491,17 +491,17 @@ Key settings in `app/settings.py`. Most runtime values are read from environment
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `AUTH_USER_MODEL` | `triplea.User` | Custom user model |
+| `AUTH_USER_MODEL` | `dominion.User` | Custom user model |
 | `LOGIN_URL` | `/accounts/login/` | |
-| `SESSION_COOKIE_NAME` | `tripleasessionid` | |
+| `SESSION_COOKIE_NAME` | `dominionid` | |
 | `DATABASE_URL` | SQLite | PostgreSQL in production (psycopg 3) |
 | `EMAIL_BACKEND` | `CeleryFileBackend` | Set to `CelerySmtpBackend` or `CelerySESBackend` for production |
-| `TRIPLEA_API_RESULTS_PER_PAGE` | 100 | Pagination page size |
-| `TRIPLEA_MAX_DESCENDANT_DOMAINS` | 1000 | Soft limit on domains per root |
-| `TRIPLEA_MAX_RESOURCES_PER_DOMAIN` | 10,000,000 | Soft limit on resources per domain |
+| `DOMINION_API_RESULTS_PER_PAGE` | 100 | Pagination page size |
+| `DOMINION_MAX_DESCENDANT_DOMAINS` | 1000 | Soft limit on domains per root |
+| `DOMINION_MAX_RESOURCES_PER_DOMAIN` | 10,000,000 | Soft limit on resources per domain |
 | `ACCOUNT_ACTIVATION_DAYS` | 7 | Registration window in days |
 | `OAUTH2_PROVIDER.OIDC_ENABLED` | `True` | Enable OIDC |
-| `OAUTH2_PROVIDER.OAUTH2_VALIDATOR_CLASS` | `triplea.oauth_validators.CustomOAuth2Validator` | Custom claims + app-scoped users |
+| `OAUTH2_PROVIDER.OAUTH2_VALIDATOR_CLASS` | `dominion.oauth_validators.CustomOAuth2Validator` | Custom claims + app-scoped users |
 
 For PostgreSQL, `CONN_MAX_AGE=60`, `CONN_HEALTH_CHECKS=True`, and `statement_timeout=10000` ms are applied automatically when a PostgreSQL `DATABASE_URL` is detected.
 

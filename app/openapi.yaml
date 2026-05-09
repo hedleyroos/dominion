@@ -1,8 +1,8 @@
 openapi: 3.0.3
 
 info:
-    title: TripleA REST APIs
-    description: TripleA REST APIs
+    title: Dominion REST APIs
+    description: Dominion REST APIs
     version: "1.0.0"
 
 servers:
@@ -1088,13 +1088,13 @@ components:
         basic:
             type: http
             scheme: basic
-            x-basicInfoFunc: triplea_api.auth.basic_auth
+            x-basicInfoFunc: dominion_api.auth.basic_auth
 
         api_key:
             type: apiKey
             name: X-Auth
             in: header
-            x-apikeyInfoFunc: triplea_api.auth.apikey_auth
+            x-apikeyInfoFunc: dominion_api.auth.apikey_auth
 
     schemas:
 

@@ -4,7 +4,7 @@ These are the project-wide coding rules and preferences for this workspace.
 
 ## What are we doing
 
-This is TripleA, an RBAC system developed in Django. It also provides OIDC. It is fully API driven.
+This is Dominion, an RBAC system developed in Django. It also provides OIDC. It is fully API driven.
 
 ## Key Documentation
 

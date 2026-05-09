@@ -20,13 +20,13 @@ if not backend.startswith("redis:"):
     raise RuntimeError("Celery backend must be redis")
 
 app = Celery(
-    "triplea",
+    "dominion",
     broker=env.str("CELERY_BROKER", "amqp://localhost:5672//"),
     backend=backend,
 )
 
 app.conf["task_always_eager"] = env.bool("CELERY_ALWAYS_EAGER", False)
-app.conf["task_default_queue"] = queue = env.str("CELERY_DEFAULT_QUEUE", "triplea")
+app.conf["task_default_queue"] = queue = env.str("CELERY_DEFAULT_QUEUE", "dominion")
 
 # Our tasks are idempotent
 app.conf["task_acks_late"] = True

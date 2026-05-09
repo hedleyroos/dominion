@@ -32,7 +32,7 @@ app.add_middleware(
 )
 app.add_api(
     'openapi.yaml',
-    resolver=connexion.resolver.RestyResolver('triplea_api'),
+    resolver=connexion.resolver.RestyResolver('dominion_api'),
     strict_validation=True,
 )
 
