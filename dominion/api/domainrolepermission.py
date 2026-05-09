@@ -186,7 +186,7 @@ async def delete(id, user, token_info, **kwargs):
 
     await invalidate_rules_permissions()
     logger.debug("action=delete object_type=DomainRolePermission object_id=%s user=%s", id, user.pk)
-    return {"message": "Item deleted successfully"}, 204
+    return None, 204
 
 
 async def search(user, token_info, **kwargs):

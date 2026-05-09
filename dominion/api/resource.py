@@ -170,7 +170,7 @@ async def delete(id, user, token_info, **kwargs):
         return {"message": "You do not have permission to delete this item."}, 403
 
     if kwargs.get("dryrun", False):
-        return {"message": "Item deleted successfully"}, 204
+        return None, 204
 
     try:
         await obj.adelete()
@@ -179,7 +179,7 @@ async def delete(id, user, token_info, **kwargs):
             "message": "Cannot delete item because other items are dependent on it. You must delete those items first."
         }, 422
 
-    return {"message": "Item deleted successfully"}, 204
+    return None, 204
 
 
 async def search(user, token_info, **kwargs):

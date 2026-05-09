@@ -109,6 +109,26 @@ class TestData:
 # Reporting helpers
 # ---------------------------------------------------------------------------
 
+# Global registry of errors by type, populated by the HTTP helpers.
+ERROR_COUNTS: dict[str, int] = {}
+
+
+def _record_error(status: int, exception: Exception | None) -> None:
+    """Record an error for later reporting."""
+    if exception is not None:
+        key = f"{type(exception).__name__}"
+        msg = str(exception)[:120]
+        if msg:
+            key = f"{key}: {msg}"
+    else:
+        key = f"HTTP {status}"
+    ERROR_COUNTS[key] = ERROR_COUNTS.get(key, 0) + 1
+
+
+def _reset_errors() -> None:
+    ERROR_COUNTS.clear()
+
+
 def _percentile(data: list[float], p: float) -> float:
     if not data:
         return 0.0
@@ -140,6 +160,11 @@ def print_results(name: str, latencies: list[float], statuses: list[int], elapse
         p99 = _percentile(latencies, 99)
         p_max = max(latencies)
         print(f"  Latency ms  p50: {p50:>7.1f}  p95: {p95:>7.1f}  p99: {p99:>7.1f}  max: {p_max:>7.1f}")
+    if ERROR_COUNTS:
+        print(f"  Error breakdown:")
+        for err_key, count in sorted(ERROR_COUNTS.items(), key=lambda x: -x[1])[:10]:
+            print(f"    [{count:>6}] {err_key}")
+    _reset_errors()
 
 
 # ---------------------------------------------------------------------------
@@ -726,8 +751,12 @@ async def _get(client: httpx.AsyncClient, path: str, api_key: str) -> tuple[floa
     t0 = loop.time()
     try:
         response = await client.get(path, headers={"X-Auth": api_key})
-        return (loop.time() - t0) * 1000, response.status_code
-    except Exception:
+        status = response.status_code
+        if status < 200 or status >= 300:
+            _record_error(status, None)
+        return (loop.time() - t0) * 1000, status
+    except Exception as e:
+        _record_error(0, e)
         return (loop.time() - t0) * 1000, 0
 
 
@@ -736,9 +765,13 @@ async def _post(client: httpx.AsyncClient, path: str, api_key: str, body: dict) 
     t0 = loop.time()
     try:
         response = await client.post(path, json=body, headers={"X-Auth": api_key})
-        data = response.json() if response.status_code < 400 else {}
-        return (loop.time() - t0) * 1000, response.status_code, data.get("id", "")
-    except Exception:
+        status = response.status_code
+        data = response.json() if status < 400 else {}
+        if status < 200 or status >= 300:
+            _record_error(status, None)
+        return (loop.time() - t0) * 1000, status, data.get("id", "")
+    except Exception as e:
+        _record_error(0, e)
         return (loop.time() - t0) * 1000, 0, ""
 
 
@@ -747,8 +780,12 @@ async def _delete(client: httpx.AsyncClient, path: str, api_key: str) -> tuple[f
     t0 = loop.time()
     try:
         response = await client.delete(path, headers={"X-Auth": api_key})
-        return (loop.time() - t0) * 1000, response.status_code
-    except Exception:
+        status = response.status_code
+        if status < 200 or status >= 300:
+            _record_error(status, None)
+        return (loop.time() - t0) * 1000, status
+    except Exception as e:
+        _record_error(0, e)
         return (loop.time() - t0) * 1000, 0
 
 
@@ -967,8 +1004,8 @@ async def run_mixed_read_write(
                 name, latency, status = await action_fn(client, idx)
                 action_latencies[name].append(latency)
                 action_statuses[name].append(status)
-            except Exception:
-                pass
+            except Exception as e:
+                _record_error(0, e)
             idx += 1
 
     async def _set_stop() -> None:
