@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Example application &#8212; Dominion 0.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=2709fde1"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Welcome to Dominion’s documentation" href="index.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="example-application">
+<h1>Example application<a class="headerlink" href="#example-application" title="Link to this heading">¶</a></h1>
+<section id="register-your-application">
+<h2>Register your application<a class="headerlink" href="#register-your-application" title="Link to this heading">¶</a></h2>
+<p>Contact <a class="reference external" href="mailto:dev&#37;&#52;&#48;dominion&#46;com">dev<span>&#64;</span>dominion<span>&#46;</span>com</a> to set up a new application. You will be supplied
+with a <em>Client Id</em>, <em>Client Secret</em> and an <em>API Key</em>. <em>Client Id</em> and <em>Client Secret</em>
+are used during the user sign up and sign in process, whereas <em>API Key</em> is used
+when making API calls. An application always has exactly one <em>Client Id</em> and <em>Client Secret</em>,
+and each user has his own <em>API Key</em>.</p>
+<p>You will require a web browser and the <cite>curl</cite> tool.</p>
+</section>
+<section id="sign-in">
+<h2>Sign in<a class="headerlink" href="#sign-in" title="Link to this heading">¶</a></h2>
+<p>The sign-in service implements Open ID Connect (OIDC) for authentication. The typical flow
+is for your application to redirect an end user to <a class="reference external" href="https://signon.dominion.com">https://signon.dominion.com</a> to
+perform registration, account activation, password retrieval and sign-in.</p>
+<p>We will be making use of an existing site to illustrate this. This saves you from
+having to build a real system for this example application.</p>
+<p>In a browser visit <a class="reference external" href="https://openidconnect.net">Open ID Connect Playground</a> and create
+an account. Click the <em>Edit</em> button on Step 1 and set the following values:</p>
+<table class="docutils align-default">
+<tbody>
+<tr class="row-odd"><td><p>Server Template:</p></td>
+<td><p>Custom</p></td>
+</tr>
+<tr class="row-even"><td><p>Authorization Token Endpoint:</p></td>
+<td><p><a class="reference external" href="https://signon.dominion.com/o/authorize">https://signon.dominion.com/o/authorize</a></p></td>
+</tr>
+<tr class="row-odd"><td><p>Token Endpoint:</p></td>
+<td><p><a class="reference external" href="https://signon.dominion.com/o/token/">https://signon.dominion.com/o/token/</a></p></td>
+</tr>
+<tr class="row-even"><td><p>OIDC Client ID:</p></td>
+<td><p>YOUR-CLIENT-ID</p></td>
+</tr>
+<tr class="row-odd"><td><p>OIDC Client Secret:</p></td>
+<td><p>YOUR-CLIENT-SECRET</p></td>
+</tr>
+<tr class="row-even"><td><p>Scope:</p></td>
+<td><p>openid</p></td>
+</tr>
+</tbody>
+</table>
+<p>Click <em>Save</em>. Click <em>Start</em>. You will be redirected to Dominion. If you do not yet have
+an account then create one, and follow the prompts until you are signed in. You will eventually
+be redirected back to the Open ID Connect Playground, and must complete the wizard.</p>
+<p>The goal of the exercise is to obtain a <em>Decoded Token Payload</em> that provides all the
+requested information on the authenticated user.</p>
+<p>All popular languages and frameworks provide Open ID Connect client libraries. For example,
+Django has <a class="reference external" href="https://github.com/mozilla/mozilla-django-oidc">Mozilla Django OIDC</a>.
+These libraries seamlessly integrate the framework’s own user accounts with the OIDC user accounts.
+Find one that suits your environment and use it in real applications.</p>
+</section>
+<section id="manage-domains">
+<h2>Manage domains<a class="headerlink" href="#manage-domains" title="Link to this heading">¶</a></h2>
+<p>All commands are performed in a terminal. Fetch our list of domains:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;GET&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/domain&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span>
+</pre></div>
+</div>
+<p>We don’t have any domain yet:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="p">[]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Let’s create a top-level domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/domain&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Acme SA&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>The response returns the newly created domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;parent&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+    <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Acme SA&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Fetch the list of domains again, and we receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+        <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;parent&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+        <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Acme SA&quot;</span>
+    <span class="p">}</span>
+    <span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Let’s create a subdomain. Be sure to substitute <cite>parent</cite> with the <cite>id</cite> value as returned above:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/domain&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Acme Western Cape&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;parent&quot;</span><span class="p">:</span> <span class="s2">&quot;ACME-SA-ID&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>Domains can be created, read, updated and deleted. Refer to the API documentation for details.</p>
+</section>
+<section id="user-creation">
+<h2>User creation<a class="headerlink" href="#user-creation" title="Link to this heading">¶</a></h2>
+<p>Users typically register themselves via the OIDC mechanism, and, when a user authenticates against
+Dominion, our application receives the user’s email address, first name, last name,
+and crucially the user’s internal identifier. Our application can then use this <cite>User ID</cite> to
+add users to domains, assign roles and more.</p>
+<p>But we’re getting ahead of ourselves. Sometimes we need to create the users ourselves. This is
+typically required when migrating an existing application to use Dominion:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/user&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;john@example.com&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;first_name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;last_name&quot;</span><span class="p">:</span> <span class="s2">&quot;Smith&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;password&quot;</span><span class="p">:</span> <span class="s2">&quot;secretpassword&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;johnsmith&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="p">{</span>
+<span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;68c23c3a-7455-4b75-84f3-4eb76e867d18&quot;</span><span class="p">,</span>
+<span class="s2">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;johnsmith&quot;</span><span class="p">,</span>
+<span class="s2">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;john@example.com&quot;</span><span class="p">,</span>
+<span class="s2">&quot;first_name&quot;</span><span class="p">:</span> <span class="s2">&quot;John&quot;</span><span class="p">,</span>
+<span class="s2">&quot;last_name&quot;</span><span class="p">:</span> <span class="s2">&quot;Smith&quot;</span><span class="p">,</span>
+<span class="s2">&quot;api_key&quot;</span><span class="p">:</span> <span class="s2">&quot;a2aee1b2-deb0-402c-a0e8-59d75804766a&quot;</span><span class="p">,</span>
+<span class="s2">&quot;domains&quot;</span><span class="p">:</span> <span class="p">[]</span>
+  <span class="p">}</span>
+</pre></div>
+</div>
+<p>Unlike domains users cannot be updated or deleted. Users may belong to domains that are not under your
+control, and modifying users will affect these domains.</p>
+<p>If you plan to make API calls  as this user then make a note of the API Key now,
+because you cannot retrieve it after this step. Only the user himself may retrieve his
+API Key.</p>
+</section>
+<section id="roles">
+<h2>Roles<a class="headerlink" href="#roles" title="Link to this heading">¶</a></h2>
+<p>Fetch the list of roles our application may use:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;GET&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/role&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;access_checker&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Access checker&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;anonymous&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Anonymous&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;authenticated&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Authenticated&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;manager&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Manager&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;owner&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Owner&quot;</span>
+        <span class="p">}</span>
+    <span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The default set of roles is very useful, but our application requires the custom role <cite>General Manager</cite>.
+Let’s create it on our root domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/role&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;General Manager&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>The response returns the newly created role:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;General Manager&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="permissions">
+<h2>Permissions<a class="headerlink" href="#permissions" title="Link to this heading">¶</a></h2>
+<p>Fetch the list of permissions our application may use:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;GET&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/permission&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">7</span><span class="p">,</span>
+    <span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;check_access&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Check access&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;create&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Create&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;delete&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Delete&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;manage_roles&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Manage roles&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;read&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Read&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;update&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Update&quot;</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+            <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;view&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="n">null</span><span class="p">,</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;View as public&quot;</span>
+        <span class="p">}</span>
+    <span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The default set of permissions is very useful, but our application requires the custom permission <cite>View Orders</cite>.
+Let’s create it on our root domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/permission&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;view-orders&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;View Orders&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>The response returns the newly created permission:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;view-orders&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;View Orders&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="role-permission-mappings">
+<h2>Role-permission mappings<a class="headerlink" href="#role-permission-mappings" title="Link to this heading">¶</a></h2>
+<p>Roles and permissions are tied together per domain. Our application automatically
+receives the default role-permission mapping on the root domain. Fetch the list
+of role-permission mappings for our root domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;GET&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/domainrolepermission?domain=7363c714-0540-4ffa-a31f-e046b403b7a8&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span>
+</pre></div>
+</div>
+<p>Keep in mind that domains inherit role-permission mappings from parent domains by default. The
+subdomain we created earlier is not a root domain and does not have its own role-permission mapping
+at this stage, so it does not appear in the result set:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">11</span><span class="p">,</span>
+<span class="s2">&quot;results&quot;</span><span class="p">:</span> <span class="p">[</span>
+  <span class="p">{</span>
+    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;4e1b486a-13d7-4aa1-826f-96a6efd45d37&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;inherit&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+    <span class="s2">&quot;permission&quot;</span><span class="p">:</span> <span class="s2">&quot;view&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;authenticated&quot;</span>
+  <span class="p">},</span>
+  <span class="p">{</span>
+    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;19137cd4-d9b6-407b-8759-c62b346b4048&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;inherit&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+    <span class="s2">&quot;permission&quot;</span><span class="p">:</span> <span class="s2">&quot;create&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;manager&quot;</span>
+  <span class="p">}</span>
+<span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Let’s create a mapping that allows the <cite>General Manager</cite> role to <cite>View Orders</cite> on the root domain:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/domainrolepermission&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;3fa85f64-5717-4562-b3fc-2c963f66afa6&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;permission&quot;</span><span class="p">:</span> <span class="s2">&quot;view-orders&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+<span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;3fa85f64-5717-4562-b3fc-2c963f66afa6&quot;</span><span class="p">,</span>
+<span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;42ad49e1-39a2-45ea-aa13-b17c5cb32349&quot;</span><span class="p">,</span>
+<span class="s2">&quot;inherit&quot;</span><span class="p">:</span> <span class="n">true</span><span class="p">,</span>
+<span class="s2">&quot;permission&quot;</span><span class="p">:</span> <span class="s2">&quot;view-orders&quot;</span><span class="p">,</span>
+<span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="user-domain-roles">
+<h2>User domain roles<a class="headerlink" href="#user-domain-roles" title="Link to this heading">¶</a></h2>
+<p>We have created custom roles and permissions, and we have created a role-permission mapping.
+Users may have zero or more roles per domain, so let’s create some user domain roles:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;POST&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/userdomainrole&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: */*&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;Content-Type: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">d</span> <span class="s1">&#39;{</span>
+  <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span><span class="p">,</span>
+  <span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="s2">&quot;68c23c3a-7455-4b75-84f3-4eb76e867d18&quot;</span>
+  <span class="p">}</span><span class="s1">&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;domain&quot;</span><span class="p">:</span> <span class="s2">&quot;7363c714-0540-4ffa-a31f-e046b403b7a8&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;b316c776-4c0e-4325-a1e8-6f96ddb5448d&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;general-manager&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;user&quot;</span><span class="p">:</span> <span class="s2">&quot;68c23c3a-7455-4b75-84f3-4eb76e867d18&quot;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="a-note-on-resources">
+<h2>A note on resources<a class="headerlink" href="#a-note-on-resources" title="Link to this heading">¶</a></h2>
+<p>Resources are much like domains: a resource may live directly under a domain, or under another resource.
+An example of a resource is an individual order. All the roles, permissions and mapping may also
+be applied to resources for fine-grained control, but that is discussed in another section.</p>
+</section>
+<section id="access-checks">
+<h2>Access checks<a class="headerlink" href="#access-checks" title="Link to this heading">¶</a></h2>
+<p>All the configuration has been done. All that remains is to check whether a user has a permission on
+a domain. We use John and the root domain’s IDs:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>  <span class="n">curl</span> <span class="o">-</span><span class="n">X</span> <span class="s1">&#39;GET&#39;</span> \
+<span class="s1">&#39;https://signon.dominion.com/api/v1.0/access/domain/permission/68c23c3a-7455-4b75-84f3-4eb76e867d18/7363c714-0540-4ffa-a31f-e046b403b7a8/view-orders&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;accept: application/json&#39;</span> \
+  <span class="o">-</span><span class="n">H</span> <span class="s1">&#39;X-Auth: YOUR-API-KEY&#39;</span>
+</pre></div>
+</div>
+<p>We receive:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="n">true</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Once roles, permissions and mappings have been set up nearly all queries performed by our example application
+are access checks. Dominion does all of the heavy lifting, allowing the
+example application to perform its core tasks.</p>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">Dominion</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Example application</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#register-your-application">Register your application</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#sign-in">Sign in</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#manage-domains">Manage domains</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#user-creation">User creation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#roles">Roles</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#permissions">Permissions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#role-permission-mappings">Role-permission mappings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#user-domain-roles">User domain roles</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#a-note-on-resources">A note on resources</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#access-checks">Access checks</a></li>
+</ul>
+</li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="index.html" title="previous chapter">Welcome to Dominion’s documentation</a></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022, Hedley Roos.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/example.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

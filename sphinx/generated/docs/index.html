@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Welcome to Dominion’s documentation &#8212; Dominion 0.1 documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=2709fde1"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Example application" href="example.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="welcome-to-dominion-s-documentation">
+<h1>Welcome to Dominion’s documentation<a class="headerlink" href="#welcome-to-dominion-s-documentation" title="Link to this heading">¶</a></h1>
+<div class="toctree-wrapper compound">
+</div>
+<p><strong>Dominion</strong> manages user accounts, authentication and role based access control.
+Third party products offload the heavy lifting to Dominion and can then focus on their core
+offering.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>Let’s start with an example application. We’re writing a staff and inventory system
+for a national company <em>Acme</em> with a national head office, regional offices and
+offices in towns. Dominion allows us to do the following:</p>
+<a class="reference internal image-reference" href="_images/acme.png"><img alt="Acme example" src="_images/acme.png" style="width: 100%;" />
+</a>
+<section id="terminology-in-one-line">
+<h3>Terminology in one line<a class="headerlink" href="#terminology-in-one-line" title="Link to this heading">¶</a></h3>
+<p>A <strong>domain</strong> is an abstract nestable construct. It typically represents an organization or site.</p>
+<p>A <strong>resource</strong> is anything belonging to a domain, for example an order or a staff record. Resources
+are also nestable.</p>
+<p>A <strong>role</strong> is the answer to the question <em>what am I?</em> For example:
+<em>What am I?</em> I am a Manager.</p>
+<p>A <strong>permission</strong> is the X in the question <em>can a particular user X?</em> For example:
+<em>Can a particular user View Orders?</em>.</p>
+</section>
+<section id="role-permission-mapping">
+<h3>Role-permission mapping<a class="headerlink" href="#role-permission-mapping" title="Link to this heading">¶</a></h3>
+<p>Roles are mapped to permissions for every domain. If a domain does not
+specify its own mapping then the mapping is inherited from its parent
+domain. The default role-permission mapping provided by Dominion is:</p>
+<table class="docutils align-default" id="id1">
+<caption><span class="caption-text">Default role-permission mapping</span><a class="headerlink" href="#id1" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 16.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"></th>
+<th class="head"><p>Create</p></th>
+<th class="head"><p>Read</p></th>
+<th class="head"><p>Update</p></th>
+<th class="head"><p>Delete</p></th>
+<th class="head"><p>Check access</p></th>
+<th class="head"><p>Manage roles</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Anonymous</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-odd"><td><p>Authenticated</p></td>
+<td></td>
+<td><p>x</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>Manager</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td></td>
+<td></td>
+<td><p>x</p></td>
+</tr>
+<tr class="row-odd"><td><p>Owner</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td></td>
+<td><p>x</p></td>
+</tr>
+<tr class="row-even"><td><p>Access checker</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td><p>x</p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Our application’s role-permission mapping is more extensive. We don’t override
+any of the default role-permissions mappings, so they are implicitly still
+present. It is up to our application to decide whether to use them or not.</p>
+<table class="docutils align-default" id="id2">
+<caption><span class="caption-text">Our application role-permission mapping</span><a class="headerlink" href="#id2" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 33.0%" />
+<col style="width: 33.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"></th>
+<th class="head"><p>View orders</p></th>
+<th class="head"><p>View staff records</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Manager</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+</tr>
+<tr class="row-odd"><td><p>Sales manager</p></td>
+<td><p>x</p></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Finally we reach the effective set of user permissions. These permissions
+are computed from our domain hierarchy, the role-permission mappings per domain
+and the user roles per domain.</p>
+<table class="docutils align-default" id="id3">
+<caption><span class="caption-text">Effective user permissions</span><a class="headerlink" href="#id3" title="Link to this table">¶</a></caption>
+<colgroup>
+<col style="width: 16.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+<col style="width: 14.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"></th>
+<th class="head"><p>View orders for Acme SA</p></th>
+<th class="head"><p>View staff records for Acme SA</p></th>
+<th class="head"><p>View orders for Acme WC</p></th>
+<th class="head"><p>View staff records for Acme WC</p></th>
+<th class="head"><p>View orders for Acme CPT</p></th>
+<th class="head"><p>View staff records for Acme CPT</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Alice</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+</tr>
+<tr class="row-odd"><td><p>Bob</p></td>
+<td><p>x</p></td>
+<td></td>
+<td><p>x</p></td>
+<td></td>
+<td><p>x</p></td>
+<td></td>
+</tr>
+<tr class="row-even"><td><p>Charlie</p></td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+<td><p>x</p></td>
+<td><p>x</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+</section>
+<section id="index">
+<h2>Index<a class="headerlink" href="#index" title="Link to this heading">¶</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="example.html">Example application</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="example.html#register-your-application">Register your application</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#sign-in">Sign in</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#manage-domains">Manage domains</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#user-creation">User creation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#roles">Roles</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#permissions">Permissions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#role-permission-mappings">Role-permission mappings</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#user-domain-roles">User domain roles</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#a-note-on-resources">A note on resources</a></li>
+<li class="toctree-l2"><a class="reference internal" href="example.html#access-checks">Access checks</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="#">Dominion</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="example.html">Example application</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="#">Documentation overview</a><ul>
+      <li>Next: <a href="example.html" title="next chapter">Example application</a></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2022, Hedley Roos.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 9.1.0</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/index.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>
