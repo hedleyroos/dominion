@@ -8,7 +8,7 @@ from dominion import admin_views
 
 
 class UserAdmin(BaseUserAdmin):
-    fieldsets = BaseUserAdmin.fieldsets + (("Triple A", {"fields": ("application_id", "api_key")}),)
+    fieldsets = BaseUserAdmin.fieldsets + (("Dominion", {"fields": ("application_id", "api_key")}),)
 
 
 class DomainAdmin(admin.ModelAdmin):
