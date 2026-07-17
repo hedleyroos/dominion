@@ -106,13 +106,11 @@ class Domain(models.Model):
         while root.parent is not None:
             root = root.parent
         self.root = root
-        # Validate *after* the insert so the counter-cache signals have populated
-        # descendant_count, but do it inside a transaction so a failed clean() rolls
-        # back the row instead of leaking it. Model.save() is always synchronous
-        # (asave() wraps it), so transaction.atomic() is safe here.
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.full_clean()
+        # Validate before the insert so an invalid row is never written. clean()
+        # accounts for the row-to-be via _state.adding, so it does not need the
+        # counter-cache signals to have fired yet.
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if self.parent_id:
@@ -124,14 +122,20 @@ class Domain(models.Model):
                     raise ValidationError({"title": "The title is already in use by an ancestor."})
                 parent = parent.parent
 
-        # Check the descendant counter on the root domain.  The counter is incremented
-        # by the post_save signal before full_clean() runs, so a fresh DB read reflects
-        # the just-inserted row.  Skip this check on unsaved (in-memory) objects where
-        # root_id has not been set yet.
+        # Check the descendant counter on the root domain. The counter reflects the
+        # currently-persisted descendants; when creating a new domain we count the
+        # row about to be inserted with +1. Skip on in-memory objects whose root has
+        # not been computed yet (the API layer's pre-save full_clean()).
         if self.root_id is not None:
             limit = settings.DOMINION_MAX_DESCENDANT_DOMAINS
-            root_count = Domain.objects.values_list("descendant_count", flat=True).get(id=self.root_id)
-            if root_count > limit:
+            if self._state.adding and self.root_id == self.id:
+                # Creating the root itself: its row isn't inserted yet, so it can't
+                # be read back — it will be the sole descendant.
+                effective_count = 1
+            else:
+                stored = Domain.objects.values_list("descendant_count", flat=True).get(id=self.root_id)
+                effective_count = stored + (1 if self._state.adding else 0)
+            if effective_count > limit:
                 raise ValidationError("The root domain may not contain more than %s child domains." % limit)
 
         # TODO: limit number of root domains owned by the same user. Hard because we don't store a single
@@ -148,9 +152,8 @@ class Role(models.Model):
 
     def save(self, *args, **kwargs):
         # TODO: disallow changing domain for existing instance
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.full_clean()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if (self.domain is not None) and (self.domain.parent is not None):
@@ -167,9 +170,8 @@ class Permission(models.Model):
 
     def save(self, *args, **kwargs):
         # TODO: disallow changing domain for existing instance
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.full_clean()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if (self.domain is not None) and (self.domain.parent is not None):
@@ -204,9 +206,8 @@ class Resource(models.Model):
         return self.urn
 
     def save(self, *args, **kwargs):
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.clean()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if self.parent_id:
@@ -215,12 +216,14 @@ class Resource(models.Model):
             if self.parent.domain != self.domain:
                 raise ValidationError("Parent domain does not match instance domain.")
 
-        # Check the resource counter on the owning domain.  The counter is incremented
-        # by the post_save signal before clean() runs, so a fresh DB read reflects
-        # the just-inserted row.
+        # Check the resource counter on the owning domain. The counter reflects the
+        # currently-persisted resources; when creating a new resource we count the
+        # row about to be inserted with +1. The owning domain always pre-exists (FK),
+        # so the read is safe before this row is saved.
         limit = settings.DOMINION_MAX_RESOURCES_PER_DOMAIN
-        resource_count = Domain.objects.values_list("resource_count", flat=True).get(id=self.domain_id)
-        if resource_count > limit:
+        stored = Domain.objects.values_list("resource_count", flat=True).get(id=self.domain_id)
+        effective_count = stored + (1 if self._state.adding else 0)
+        if effective_count > limit:
             raise ValidationError("The domain may not contain more than %s resources." % limit)
 
 
@@ -237,9 +240,8 @@ class DomainRolePermission(models.Model):
         return "%s:%s:%s" % (self.domain, self.role, self.permission)
 
     def save(self, *args, **kwargs):
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.clean()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if (self.permission.domain is not None) and (self.permission.domain != self.domain.root):
@@ -273,9 +275,8 @@ class ResourceRolePermission(models.Model):
         return "%s:%s:%s" % (self.resource, self.role, self.permission)
 
     def save(self, *args, **kwargs):
-        with transaction.atomic():
-            super().save(*args, **kwargs)
-            self.clean()
+        self.clean()
+        super().save(*args, **kwargs)
 
     def clean(self):
         if (self.permission.domain is not None) and (self.permission.domain != self.resource.domain.root):

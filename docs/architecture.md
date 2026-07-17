@@ -66,10 +66,13 @@ In production, both must be served (typically behind one reverse proxy). The
 request-scoped permission cache at each API request boundary; `dominion/decorators.py`
 provides a `@django()` decorator for the same in other contexts.
 
-`transaction.atomic` is **not usable in async ORM code**; atomicity in the async API comes
-from synchronous model `save()` methods (wrapped in `transaction.atomic()`, invoked via
-`asave()`/`sync_to_async`) and transaction-free patterns (`get_or_create`, compare-and-set
-`update()`, DB constraints).
+`transaction.atomic` is **not usable in async ORM code**. Models validate *before* they
+persist — each `save()` runs `self.clean()` then `super().save()`, so an invalid row is
+never written (no rollback needed). Uniqueness is enforced by DB constraints, with every
+create handler translating `IntegrityError` into a `409`. `transaction.atomic` is used only
+in synchronous multi-row managers (`DomainManager.create`/`ResourceManager.create`, invoked
+from async via `sync_to_async`), alongside transaction-free patterns (`get_or_create`,
+compare-and-set `update()`).
 
 ---
 

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from asgiref.sync import sync_to_async
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 
 from dominion.api.utils import paginate_result
@@ -70,6 +71,9 @@ async def post(body, user, token_info, **kwargs):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
+    except IntegrityError:
+        # Unique constraint on urn fired (e.g. a concurrent duplicate create).
+        return {"message": "A resource with this urn already exists."}, 409
 
     return await ResourceSerializer(instance=obj).adata, 201
 

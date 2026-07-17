@@ -70,3 +70,38 @@ class SaveValidationLeakTestCase(TransactionTestCase):
         root.refresh_from_db()
         self.assertEqual(root.descendant_count, 2)
         self.assertTrue(models.Domain.objects.filter(id=child.id).exists())
+
+    def test_domain_create_at_exactly_the_limit_succeeds(self):
+        """The last child that reaches the limit is allowed; the next one over is not."""
+        root = models.Domain.objects.create(title="EdgeRoot", owner=self.owner)
+        with override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=2):
+            # root counts as 1; one child brings the total to exactly 2 (== limit).
+            child = models.Domain.objects.create(title="EdgeChild", owner=self.owner, parent=root)
+            self.assertTrue(models.Domain.objects.filter(id=child.id).exists())
+            # A second child would be 3 > 2 and must be rejected before insert.
+            before = models.Domain.objects.count()
+            with self.assertRaises(ValidationError):
+                models.Domain.objects.create(title="EdgeChild2", owner=self.owner, parent=root)
+            self.assertEqual(models.Domain.objects.count(), before)
+
+    def test_update_existing_domain_does_not_trip_limit(self):
+        """Re-saving an existing domain must not count itself again and falsely fail."""
+        root = models.Domain.objects.create(title="UpdRoot", owner=self.owner)
+        child = models.Domain.objects.create(title="UpdChild", owner=self.owner, parent=root)
+        # root now has descendant_count == 2. With the limit set to that exact value,
+        # updating the existing child (not adding) must still be allowed.
+        with override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=2):
+            child.title = "UpdChildRenamed"
+            child.save()  # must not raise
+        child.refresh_from_db()
+        self.assertEqual(child.title, "UpdChildRenamed")
+
+    def test_resource_create_at_exactly_the_limit_succeeds(self):
+        domain = models.Domain.objects.create(title="ResEdgeDom", owner=self.owner)
+        with override_settings(DOMINION_MAX_RESOURCES_PER_DOMAIN=1):
+            r1 = models.Resource.objects.create(urn="edge:r1", domain=domain, owner=self.owner)
+            self.assertTrue(models.Resource.objects.filter(id=r1.id).exists())
+            before = models.Resource.objects.count()
+            with self.assertRaises(ValidationError):
+                models.Resource.objects.create(urn="edge:r2", domain=domain, owner=self.owner)
+            self.assertEqual(models.Resource.objects.count(), before)

@@ -3,6 +3,7 @@ from uuid import UUID
 from asgiref.sync import sync_to_async
 from connexion import request
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 
 from dominion.api.utils import paginate_result
@@ -51,6 +52,10 @@ async def post(body, user, token_info, **kwargs):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
+    except IntegrityError:
+        # A unique constraint fired (e.g. a concurrent create that raced past
+        # validation). Surface a clean conflict rather than a 500.
+        return {"message": "A conflicting domain already exists."}, 409
 
     return await DomainSerializer(instance=obj).adata, 201
 

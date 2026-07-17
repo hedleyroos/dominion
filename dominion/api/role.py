@@ -3,6 +3,7 @@ from uuid import UUID
 from asgiref.sync import sync_to_async
 from connexion import request
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 
@@ -46,6 +47,9 @@ async def post(body, user, token_info, **kwargs):
         obj = await Role.objects.acreate(**body)
     except ValidationError as e:
         return e.message_dict, 422
+    except IntegrityError:
+        # Unique constraint on code fired (e.g. a concurrent duplicate create).
+        return {"message": "A role with this code already exists."}, 409
 
     return await RoleSerializer(instance=obj).adata, 201
 

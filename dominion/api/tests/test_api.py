@@ -4,11 +4,12 @@ from unittest import mock
 
 import connexion
 import httpx
+from asgiref.sync import sync_to_async
 from django.test import override_settings
 
 from dominion.tests.base import BaseTestCase
 from dominion.models import User, Role, Permission, DomainRolePermission, DomainPermission, \
-    ResourceRolePermission, ResourcePermission, UserDomainRole
+    ResourceRolePermission, ResourcePermission, UserDomainRole, Resource
 
 
 _SPEC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../conf"))
@@ -681,6 +682,38 @@ class APITestCase(BaseTestCase):
                 "/api/v1.0/access/domain/permissions/%s/%s" % (self.owner.id, uuid.uuid4())
             )
             assert response.status_code == 404
+
+    async def test_duplicate_role_race_returns_409_not_500(self):
+        """Concurrent duplicate role create (unique code) → 409, not an IntegrityError 500."""
+        await Role.objects.acreate(code="race-role", title="Race", domain=self.domaina)
+        async with await self.get_client("owner") as client:
+            with mock.patch.object(Role, "full_clean", return_value=None):
+                response = await client.post(
+                    "/api/v1.0/role",
+                    json={"title": "Race", "code": "race-role", "domain": str(self.domaina.id)},
+                )
+            assert response.status_code == 409
+
+    async def test_duplicate_permission_race_returns_409_not_500(self):
+        await Permission.objects.acreate(code="race-perm", title="Race", domain=self.domaina)
+        async with await self.get_client("owner") as client:
+            with mock.patch.object(Permission, "full_clean", return_value=None):
+                response = await client.post(
+                    "/api/v1.0/permission",
+                    json={"title": "Race", "code": "race-perm", "domain": str(self.domaina.id)},
+                )
+            assert response.status_code == 409
+
+    async def test_duplicate_resource_race_returns_409_not_500(self):
+        """Concurrent duplicate resource create (unique urn) → 409, not a 500."""
+        await sync_to_async(Resource.objects.create)(urn="race:res", domain=self.domaina, owner=self.owner)
+        async with await self.get_client("owner") as client:
+            with mock.patch.object(Resource, "full_clean", return_value=None):
+                response = await client.post(
+                    "/api/v1.0/resource",
+                    json={"urn": "race:res", "domain": str(self.domaina.id)},
+                )
+            assert response.status_code == 409
 
     async def test_access_domain_permission_missing_domain_returns_404(self):
         import uuid
