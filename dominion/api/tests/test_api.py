@@ -1,5 +1,6 @@
 import base64
 import os
+from unittest import mock
 
 import connexion
 import httpx
@@ -7,7 +8,7 @@ from django.test import override_settings
 
 from dominion.tests.base import BaseTestCase
 from dominion.models import User, Role, Permission, DomainRolePermission, DomainPermission, \
-    ResourceRolePermission, ResourcePermission
+    ResourceRolePermission, ResourcePermission, UserDomainRole
 
 
 _SPEC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../conf"))
@@ -338,12 +339,21 @@ class APITestCase(BaseTestCase):
             assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=1"
             assert response.json()["next"] == "http://testserver/api/v1.0/domain?page=3"
 
-            response = await client.get("/api/v1.0/domain?page=4")
-            assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=3"
+            # Page 3 is the true last page (6 domains, 2 per page): it must be
+            # reachable, non-empty, and carry no "next" link.
+            response = await client.get("/api/v1.0/domain?page=3")
+            assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=2"
             assert "next" not in response.json()
+            assert len(response.json()["results"]) > 0
+
+            # Out-of-range pages clamp to the last real page.
+            response = await client.get("/api/v1.0/domain?page=4")
+            assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=2"
+            assert "next" not in response.json()
+            assert len(response.json()["results"]) > 0
 
             response = await client.get("/api/v1.0/domain?page=5")
-            assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=3"
+            assert response.json()["previous"] == "http://testserver/api/v1.0/domain?page=2"
             assert "next" not in response.json()
 
     async def test_role_crud(self):
@@ -618,6 +628,78 @@ class APITestCase(BaseTestCase):
             )
             assert response.status_code == 403
 
+    async def test_duplicate_userdomainrole_race_returns_409_not_500(self):
+        """A concurrent duplicate assignment (full_clean passes, DB constraint fires)
+        must surface as a clean 409, never an uncaught IntegrityError 500.
+
+        The in-memory full_clean() normally catches duplicates and returns 422; we
+        patch it to a no-op to simulate the race window where two requests both pass
+        the check and the database unique_together is the only guard left.
+        """
+        # Pre-create the assignment so the DB row already exists.
+        role_manager = await Role.objects.aget(code="manager")
+        await UserDomainRole.objects.acreate(
+            user=self.piet, domain=self.domaina, role=role_manager
+        )
+        async with await self.get_client("owner") as client:
+            with mock.patch.object(UserDomainRole, "full_clean", return_value=None):
+                response = await client.post(
+                    "/api/v1.0/userdomainrole",
+                    json={"user": str(self.piet.id), "domain": str(self.domaina.id), "role": "manager"},
+                )
+            assert response.status_code == 409
+
+    async def test_effective_permissions_lists_granted_codes(self):
+        # Owner has check_access and holds the owner role on domaina, so the
+        # introspection endpoint returns the full set of permissions owner effectively has.
+        async with await self.get_client("owner") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permissions/%s/%s" % (self.owner.id, self.domaina.id)
+            )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["user"] == str(self.owner.id)
+            assert body["domain"] == str(self.domaina.id)
+            # owner role grants create/read/update/delete/manage_roles; check_access comes
+            # from the access_checker role also assigned to the creator.
+            assert "read" in body["permissions"]
+            assert "delete" in body["permissions"]
+            assert body["permissions"] == sorted(body["permissions"])
+
+    async def test_effective_permissions_requires_check_access(self):
+        # Piet lacks check_access on domaina.
+        async with await self.get_client("piet") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permissions/%s/%s" % (self.piet.id, self.domaina.id)
+            )
+            assert response.status_code == 403
+
+    async def test_effective_permissions_missing_domain_returns_404(self):
+        import uuid
+        async with await self.get_client("owner") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permissions/%s/%s" % (self.owner.id, uuid.uuid4())
+            )
+            assert response.status_code == 404
+
+    async def test_access_domain_permission_missing_domain_returns_404(self):
+        import uuid
+        async with await self.get_client("owner") as client:
+            response = await client.get(
+                "/api/v1.0/access/domain/permission/%s/%s/read"
+                % (self.owner.id, uuid.uuid4())
+            )
+            assert response.status_code == 404
+
+    async def test_access_resource_permission_missing_resource_returns_404(self):
+        import uuid
+        async with await self.get_client("owner") as client:
+            response = await client.get(
+                "/api/v1.0/access/resource/permission/%s/%s/read"
+                % (self.owner.id, uuid.uuid4())
+            )
+            assert response.status_code == 404
+
     async def test_login_no_matching_email(self):
         transport = httpx.ASGITransport(app=self.application)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -668,3 +750,92 @@ class APITestCase(BaseTestCase):
                 "/api/v1.0/user/by-api-key/%s" % uuid.uuid4()
             )
             assert response.status_code == 404
+
+
+class PaginationTestCase(BaseTestCase):
+    """Exercise paginate_result via the role list endpoint.
+
+    Covers the exact-multiple page count (no phantom empty page), link
+    presence on first/middle/last pages, and out-of-range page clamping.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.application = create_app()
+
+    async def _client(self):
+        transport = httpx.ASGITransport(app=self.application)
+        client = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+        client.headers.update(auth_header("owner", "password"))
+        return client
+
+    async def _create_roles(self, prefix, n):
+        from asgiref.sync import sync_to_async
+        for i in range(n):
+            await sync_to_async(Role.objects.create)(
+                code="%s%s" % (prefix, i), title="Pagination %s %s" % (prefix, i), domain=self.domaina
+            )
+
+    async def _collect_pages(self, client):
+        pages = []
+        url = "/api/v1.0/role"
+        while url:
+            response = await client.get(url)
+            assert response.status_code == 200
+            data = response.json()
+            pages.append(data)
+            url = data.get("next")
+        return pages
+
+    async def test_single_page_has_no_links(self):
+        async with await self._client() as client:
+            response = await client.get("/api/v1.0/role")
+            data = response.json()
+            assert "previous" not in data
+            assert "next" not in data
+            assert len(data["results"]) == data["count"]
+
+    async def test_exact_multiple_of_page_size(self):
+        async with await self._client() as client:
+            with override_settings(DOMINION_API_RESULTS_PER_PAGE=2):
+                count = (await client.get("/api/v1.0/role")).json()["count"]
+                # Top up so the total is an exact multiple of the page size.
+                await self._create_roles("pageven", (2 - count % 2) % 2)
+
+                pages = await self._collect_pages(client)
+                total = pages[0]["count"]
+                assert total % 2 == 0
+                assert len(pages) == total // 2
+                assert all(len(page["results"]) == 2 for page in pages)
+                assert "previous" not in pages[0]
+                assert "next" not in pages[-1]
+                if len(pages) > 1:
+                    assert "previous" in pages[-1]
+                    assert "next" in pages[0]
+                codes = [role["code"] for page in pages for role in page["results"]]
+                assert len(codes) == total
+                assert len(set(codes)) == total
+
+    async def test_odd_remainder_last_page(self):
+        async with await self._client() as client:
+            with override_settings(DOMINION_API_RESULTS_PER_PAGE=2):
+                count = (await client.get("/api/v1.0/role")).json()["count"]
+                # Top up so the total is odd.
+                await self._create_roles("pagodd", 1 if count % 2 == 0 else 2)
+
+                pages = await self._collect_pages(client)
+                total = pages[0]["count"]
+                assert total % 2 == 1
+                assert len(pages) == total // 2 + 1
+                assert len(pages[-1]["results"]) == 1
+                assert "next" not in pages[-1]
+
+    async def test_out_of_range_page_clamps_to_last(self):
+        async with await self._client() as client:
+            with override_settings(DOMINION_API_RESULTS_PER_PAGE=2):
+                response = await client.get("/api/v1.0/role", params={"page": 9999})
+                data = response.json()
+                assert response.status_code == 200
+                assert "next" not in data
+                assert len(data["results"]) >= 1

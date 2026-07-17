@@ -1,6 +1,9 @@
 # Dominion — Performance & Security Remediation
 
 **Date:** 2026-05-07
+**Status:** ✅ Completed (verified 2026-07), including the async view migration and all of
+P0–P3. This doc is historical — do not treat as an active requirement. Paths reference the
+pre-restructure `app/src/dominion/` layout (now `dominion/`).
 **Scope:** P0 security/correctness fixes and best-effort P1 performance improvements found during a comprehensive architecture audit. P2 and P3 items are documented but not implemented in this phase.
 
 ---

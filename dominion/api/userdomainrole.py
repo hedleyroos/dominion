@@ -4,6 +4,7 @@ from uuid import UUID
 from asgiref.sync import sync_to_async
 from connexion import request
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 
 from dominion.models import Role, UserDomainRole
@@ -63,6 +64,10 @@ async def post(body, user, token_info, **kwargs):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
+    except IntegrityError:
+        # The unique_together constraint fired — either a duplicate assignment or a
+        # concurrent create that raced past the in-memory full_clean() check above.
+        return {"message": "This user already has this role on this domain."}, 409
 
     obj = await UserDomainRole.objects.select_related("role", "domain", "user").aget(id=obj.id)
     await invalidate_user_permissions(str(user_id))

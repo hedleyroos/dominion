@@ -22,8 +22,7 @@ async def get(user_id, domain_id, permission, user, token_info, **kwargs):
 
     domain = await Domain.objects.filter(id=domain_id).afirst()
     if domain is None:
-        # 400 because this is technically a bad request
-        return {"message": DOMAIN_NOT_FOUND.format(domain_id)}, 400
+        return {"message": DOMAIN_NOT_FOUND.format(domain_id)}, 404
 
     # Only users with domain check_access permission may perform this query
     if not await user_has_permission_for_domain(user.id, "check_access", domain.id):

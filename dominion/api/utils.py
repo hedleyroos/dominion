@@ -1,3 +1,5 @@
+import math
+
 from connexion import request
 from asgiref.sync import sync_to_async
 from django.conf import settings
@@ -31,7 +33,7 @@ async def paginate_result(queryset, serializer_class):
     """
     items_per_page = settings.DOMINION_API_RESULTS_PER_PAGE
     count = await queryset.acount()
-    max_pages = int(count / items_per_page) + 1
+    max_pages = max(1, math.ceil(count / items_per_page))
 
     starlette_request = request._starlette_request
     # No validation on invalid page. Just fix it.
@@ -43,9 +45,6 @@ async def paginate_result(queryset, serializer_class):
         page = 1
     if page > max_pages:
         page = max_pages
-
-    previous = max(page - 1, 1)
-    next_page = min(page + 1, max_pages)
 
     base_url = str(starlette_request.url)
     if "?" in base_url:
@@ -66,15 +65,15 @@ async def paginate_result(queryset, serializer_class):
     else:
         base_url += "&page="
 
-    previous_url = base_url + str(previous)
-    next_url = base_url + str(next_page)
+    previous_url = base_url + str(page - 1)
+    next_url = base_url + str(page + 1)
 
     result = {
         "count": count,
     }
-    if previous != page:
+    if page > 1:
         result["previous"] = previous_url
-    if next_page != max_pages:
+    if page < max_pages:
         result["next"] = next_url
 
     serializer = serializer_class(queryset[(page-1)*items_per_page:page*items_per_page], many=True)

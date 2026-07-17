@@ -3,24 +3,31 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
-from dominion.utils import user_has_permission_for_domain
+from dominion.utils import (
+    invalidate_rules_permissions_sync,
+    invalidate_user_permissions_sync,
+    user_has_permission_for_domain,
+)
 
 
 class User(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    api_key = models.UUIDField(default=uuid.uuid4, db_index=True)
+    api_key = models.UUIDField(default=uuid.uuid4, unique=True)
     created_by = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT)
     activation_date = models.DateTimeField(null=True, blank=True, db_index=True)
     application_id = models.PositiveIntegerField(default=0, db_index=True)
 
 
 class DomainManager(models.Manager):
+    @transaction.atomic
     def create(self, title, owner, parent=None, parent_id=None, id=None):
+        # Wrapped in a transaction so the domain, its default role/permission grants,
+        # and the owner's role assignments are created all-or-nothing.
         instance = super().create(id=id if id else uuid.uuid4(), title=title, parent_id=parent.id if parent else parent_id)
 
         if instance.parent is None:
@@ -99,8 +106,13 @@ class Domain(models.Model):
         while root.parent is not None:
             root = root.parent
         self.root = root
-        super().save(*args, **kwargs)
-        self.full_clean()
+        # Validate *after* the insert so the counter-cache signals have populated
+        # descendant_count, but do it inside a transaction so a failed clean() rolls
+        # back the row instead of leaking it. Model.save() is always synchronous
+        # (asave() wraps it), so transaction.atomic() is safe here.
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.full_clean()
 
     def clean(self):
         if self.parent_id:
@@ -136,8 +148,9 @@ class Role(models.Model):
 
     def save(self, *args, **kwargs):
         # TODO: disallow changing domain for existing instance
-        super().save(*args, **kwargs)
-        self.full_clean()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.full_clean()
 
     def clean(self):
         if (self.domain is not None) and (self.domain.parent is not None):
@@ -154,8 +167,9 @@ class Permission(models.Model):
 
     def save(self, *args, **kwargs):
         # TODO: disallow changing domain for existing instance
-        super().save(*args, **kwargs)
-        self.full_clean()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.full_clean()
 
     def clean(self):
         if (self.domain is not None) and (self.domain.parent is not None):
@@ -163,6 +177,7 @@ class Permission(models.Model):
 
 
 class ResourceManager(models.Manager):
+    @transaction.atomic
     def create(self, urn, owner, parent=None, parent_id=None, domain=None, domain_id=None):
         instance = super().create(
             urn=urn,
@@ -189,8 +204,9 @@ class Resource(models.Model):
         return self.urn
 
     def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        self.clean()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.clean()
 
     def clean(self):
         if self.parent_id:
@@ -221,8 +237,9 @@ class DomainRolePermission(models.Model):
         return "%s:%s:%s" % (self.domain, self.role, self.permission)
 
     def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        self.clean()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.clean()
 
     def clean(self):
         if (self.permission.domain is not None) and (self.permission.domain != self.domain.root):
@@ -256,8 +273,9 @@ class ResourceRolePermission(models.Model):
         return "%s:%s:%s" % (self.resource, self.role, self.permission)
 
     def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-        self.clean()
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            self.clean()
 
     def clean(self):
         if (self.permission.domain is not None) and (self.permission.domain != self.resource.domain.root):
@@ -346,3 +364,39 @@ def _resource_post_delete(sender, instance, **kwargs):
     Domain.objects.filter(id=instance.domain_id).update(
         resource_count=F("resource_count") - 1
     )
+
+
+# ---------------------------------------------------------------------------
+# Permission-cache invalidation signals
+# ---------------------------------------------------------------------------
+# These fire on every mutation path — the async API, the Django admin, and any
+# host project embedding Dominion that mutates rows via the ORM — so cached
+# allow/deny results can never go stale regardless of who made the change. The
+# API endpoints also invalidate explicitly; a redundant delete is a safe no-op.
+#
+# User<->role assignments invalidate a single user; role<->permission rules
+# (including the DomainPermission/ResourcePermission inherit flags) affect every
+# user, so they bump the global rules version.
+
+@receiver(post_save, sender=UserDomainRole)
+@receiver(post_delete, sender=UserDomainRole)
+def _user_domain_role_changed(sender, instance, **kwargs):
+    invalidate_user_permissions_sync(instance.user_id)
+
+
+@receiver(post_save, sender=UserResourceRole)
+@receiver(post_delete, sender=UserResourceRole)
+def _user_resource_role_changed(sender, instance, **kwargs):
+    invalidate_user_permissions_sync(instance.user_id)
+
+
+@receiver(post_save, sender=DomainRolePermission)
+@receiver(post_delete, sender=DomainRolePermission)
+@receiver(post_save, sender=ResourceRolePermission)
+@receiver(post_delete, sender=ResourceRolePermission)
+@receiver(post_save, sender=DomainPermission)
+@receiver(post_delete, sender=DomainPermission)
+@receiver(post_save, sender=ResourcePermission)
+@receiver(post_delete, sender=ResourcePermission)
+def _rules_changed(sender, instance, **kwargs):
+    invalidate_rules_permissions_sync()

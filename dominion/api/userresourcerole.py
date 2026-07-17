@@ -3,6 +3,7 @@ from uuid import UUID
 
 from asgiref.sync import sync_to_async
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models.deletion import ProtectedError
 
 from dominion.models import Role, UserResourceRole
@@ -62,6 +63,9 @@ async def post(body, user, token_info, **kwargs):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
+    except IntegrityError:
+        # unique_together fired — duplicate assignment or a concurrent create race.
+        return {"message": "This user already has this role on this resource."}, 409
 
     obj = await UserResourceRole.objects.select_related("role", "resource", "user").aget(id=obj.id)
     await invalidate_user_permissions(str(user_id))

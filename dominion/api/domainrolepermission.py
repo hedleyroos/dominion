@@ -4,6 +4,7 @@ from uuid import UUID
 from asgiref.sync import sync_to_async
 from connexion import request
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.db.models import Q
 from django.db.models.deletion import ProtectedError
 
@@ -82,6 +83,9 @@ async def post(body, user, token_info, **kwargs):
             return e.message_dict, 422
         else:
             return {"message": e.messages[0]}, 422
+    except IntegrityError:
+        # unique_together fired — duplicate mapping or a concurrent create race.
+        return {"message": "This role already has this permission on this domain."}, 409
 
     # If inherit is set to false then we create an extra object
     if not inherit:

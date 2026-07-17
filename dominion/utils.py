@@ -58,6 +58,21 @@ async def invalidate_rules_permissions() -> None:
     await django_cache.adelete(_RULES_VER_KEY)
 
 
+def invalidate_user_permissions_sync(user_id) -> None:
+    """Synchronous counterpart of :func:`invalidate_user_permissions`.
+
+    Safe to call from signal receivers, the Django admin, management commands,
+    and any host project embedding Dominion that mutates role assignments via
+    the ORM.
+    """
+    django_cache.delete(_user_ver_key(str(user_id)))
+
+
+def invalidate_rules_permissions_sync() -> None:
+    """Synchronous counterpart of :func:`invalidate_rules_permissions`."""
+    django_cache.delete(_RULES_VER_KEY)
+
+
 # ---------------------------------------------------------------------------
 # Shared helper functions
 # ---------------------------------------------------------------------------
@@ -114,6 +129,17 @@ def _cache() -> dict:
         cache = {}
         _request_cache.set(cache)
     return cache
+
+
+def reset_request_cache() -> None:
+    """Clear the request-scoped permission cache.
+
+    In ASGI each request runs in its own context, so the cache starts empty
+    naturally. Call this at a request boundary as defence-in-depth (and to
+    delineate logical requests in tests) so a reused context can never serve a
+    stale version token or permission result from a previous request.
+    """
+    _request_cache.set(None)
 
 
 async def user_has_role_for_domain(user_id, role_code, domain_id):
@@ -347,7 +373,11 @@ async def get_domain_roles(domain):
         async for obj in models.DomainRolePermission.objects.filter(domain=parent).select_related("role"):
             if obj.role not in found:
                 found.append(obj.role)
-        parent = parent.parent
+        # Advance up the tree. Accessing parent.parent directly would trigger a
+        # synchronous FK fetch (SynchronousOnlyOperation); fetch it asynchronously.
+        if parent.parent_id is None:
+            break
+        parent = await models.Domain.objects.aget(id=parent.parent_id)
     return sorted(found, key=lambda item: item.code)
 
 
@@ -363,7 +393,9 @@ async def get_domain_permissions(domain):
         async for obj in models.DomainRolePermission.objects.filter(domain=parent).select_related("permission"):
             if obj.permission not in found:
                 found.append(obj.permission)
-        parent = parent.parent
+        if parent.parent_id is None:
+            break
+        parent = await models.Domain.objects.aget(id=parent.parent_id)
 
     _set_default_inherit(found)
     return sorted(found, key=lambda item: item.code)
@@ -388,7 +420,10 @@ async def get_resource_roles(resource):
         async for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("role"):
             if obj.role not in found:
                 found.append(obj.role)
-        parent = parent.parent
+        # Advance up the resource tree asynchronously (see get_domain_roles).
+        if parent.parent_id is None:
+            break
+        parent = await models.Resource.objects.aget(id=parent.parent_id)
 
     domain = await models.Domain.objects.aget(id=resource.domain_id)
     for role in await get_domain_roles(domain):
@@ -410,7 +445,9 @@ async def get_resource_permissions(resource):
         async for obj in models.ResourceRolePermission.objects.filter(resource=parent).select_related("permission"):
             if obj.permission not in found:
                 found.append(obj.permission)
-        parent = parent.parent
+        if parent.parent_id is None:
+            break
+        parent = await models.Resource.objects.aget(id=parent.parent_id)
 
     domain = await models.Domain.objects.aget(id=resource.domain_id)
     for permission in await get_domain_permissions(domain):

@@ -34,7 +34,11 @@ import httpx
 # Environment defaults — must be set before Django boots.
 # ---------------------------------------------------------------------------
 
-os.environ.setdefault("DATABASE_URL", "postgresql://dominion:dominion@localhost:5433/dominion")
+# Ensure the repo root (parent of perf/) is importable regardless of the current
+# working directory, since this script now lives in a subdirectory.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+os.environ.setdefault("DATABASE_URL", "postgresql://dominion:dominion@localhost:5432/dominion")
 os.environ.setdefault("DEBUG", "False")
 os.environ.setdefault("SECRET_KEY", "perftesting123")
 os.environ.setdefault("MEMCACHED_LOCATION", "localhost:11211")
@@ -112,6 +116,10 @@ class TestData:
 # Global registry of errors by type, populated by the HTTP helpers.
 ERROR_COUNTS: dict[str, int] = {}
 
+# Per-scenario results accumulated across a run, keyed by scenario name. Populated by
+# print_results() and consumed by the --baseline / --check regression gate.
+RESULTS: dict[str, dict] = {}
+
 
 def _record_error(status: int, exception: Exception | None) -> None:
     """Record an error for later reporting."""
@@ -154,6 +162,7 @@ def print_results(name: str, latencies: list[float], statuses: list[int], elapse
     print(f"{'=' * 64}")
     print(f"  Total     : {total:>8,}   RPS    : {rps:>8.1f}")
     print(f"  OK (2xx)  : {ok:>8,}   Errors : {errors:>8,}")
+    p50 = p95 = p99 = p_max = 0.0
     if latencies:
         p50 = _percentile(latencies, 50)
         p95 = _percentile(latencies, 95)
@@ -164,6 +173,11 @@ def print_results(name: str, latencies: list[float], statuses: list[int], elapse
         print(f"  Error breakdown:")
         for err_key, count in sorted(ERROR_COUNTS.items(), key=lambda x: -x[1])[:10]:
             print(f"    [{count:>6}] {err_key}")
+    RESULTS[name] = {
+        "total": total, "ok": ok, "errors": errors,
+        "rps": round(rps, 2), "p50": round(p50, 2),
+        "p95": round(p95, 2), "p99": round(p99, 2), "max": round(p_max, 2),
+    }
     _reset_errors()
 
 
@@ -1133,7 +1147,7 @@ def cmd_setup(args) -> None:
 # Subcommand: run
 # ---------------------------------------------------------------------------
 
-def cmd_run(args) -> None:
+def cmd_run(args) -> int:
     print("\n=== LOAD TEST ===")
     print(f"  Base URL   : {args.base_url}")
     print(f"  Concurrency: {args.concurrency}")
@@ -1142,11 +1156,21 @@ def cmd_run(args) -> None:
     data = load_test_data()
     if not data.user_ids:
         print("ERROR: no perf test data found. Run 'setup' first.")
-        sys.exit(1)
+        return 1
 
+    RESULTS.clear()
     asyncio.run(_run_all_scenarios(args.base_url, data, args.concurrency, args.duration))
 
+    exit_code = 0
+    baseline = getattr(args, "baseline", None)
+    if baseline:
+        if getattr(args, "check", False):
+            exit_code = _check_baseline(baseline, RESULTS, args.tolerance)
+        else:
+            _write_baseline(baseline, RESULTS)
+
     print("\n=== DONE ===")
+    return exit_code
 
 
 async def _run_all_scenarios(
@@ -1166,6 +1190,91 @@ async def _run_all_scenarios(
 
 
 # ---------------------------------------------------------------------------
+# Scale presets & regression gate
+# ---------------------------------------------------------------------------
+
+# Named data/load profiles. "small" is a CI-friendly smoke that finishes in minutes;
+# "full" is the original heavyweight soak. Each preset supplies defaults for the
+# setup sizes and the run load; explicit CLI flags still override.
+SCALES = {
+    "small": {"users": 500, "domains": 5, "resources": 10_000, "concurrency": 25, "duration": 15},
+    "medium": {"users": 5_000, "domains": 50, "resources": 100_000, "concurrency": 50, "duration": 30},
+    "full": {"users": 50_000, "domains": 200, "resources": 1_000_000, "concurrency": 100, "duration": 60},
+}
+
+
+def _apply_scale(args) -> None:
+    """Fill unset sizing/load args from the chosen --scale preset.
+
+    A flag counts as "set" only if it differs from the argparse default sentinel
+    (None), so an explicit --users still wins over the preset.
+    """
+    preset = SCALES.get(getattr(args, "scale", None) or "", {})
+    for key, value in preset.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+    # Final fallback to the historical defaults if neither --scale nor a flag set it.
+    fallback = SCALES["full"]
+    for key, value in fallback.items():
+        if getattr(args, key, None) is None:
+            setattr(args, key, value)
+
+
+def _write_baseline(path: str, results: dict) -> None:
+    import json
+    with open(path, "w") as fh:
+        json.dump(results, fh, indent=2, sort_keys=True)
+    print(f"\nWrote baseline for {len(results)} scenario(s) -> {path}")
+
+
+def _check_baseline(path: str, results: dict, tolerance: float) -> int:
+    """Compare current results to a stored baseline. Return process exit code.
+
+    A regression is: RPS dropped by more than `tolerance`, or p95/p99 latency grew
+    by more than `tolerance`, for any scenario present in the baseline. Also fails if
+    a baselined scenario is missing or produced new errors.
+    """
+    import json
+    try:
+        with open(path) as fh:
+            baseline = json.load(fh)
+    except FileNotFoundError:
+        print(f"\nERROR: baseline file not found: {path}. Generate it first with --baseline.")
+        return 2
+
+    regressions = []
+    for name, base in baseline.items():
+        cur = results.get(name)
+        if cur is None:
+            regressions.append(f"{name}: missing from this run")
+            continue
+        # RPS must not fall below (1 - tolerance) x baseline.
+        if base["rps"] > 0 and cur["rps"] < base["rps"] * (1 - tolerance):
+            regressions.append(
+                f"{name}: RPS {cur['rps']} < {base['rps']} x {1 - tolerance:.2f} "
+                f"({base['rps'] * (1 - tolerance):.1f})"
+            )
+        # p95/p99 must not exceed (1 + tolerance) x baseline.
+        for metric in ("p95", "p99"):
+            if base[metric] > 0 and cur[metric] > base[metric] * (1 + tolerance):
+                regressions.append(
+                    f"{name}: {metric} {cur[metric]}ms > {base[metric]}ms x {1 + tolerance:.2f} "
+                    f"({base[metric] * (1 + tolerance):.1f}ms)"
+                )
+        if cur["errors"] > base.get("errors", 0):
+            regressions.append(f"{name}: errors {cur['errors']} > baseline {base.get('errors', 0)}")
+
+    print(f"\n{'=' * 64}\n  REGRESSION CHECK (tolerance {tolerance:.0%})\n{'=' * 64}")
+    if regressions:
+        print("  FAIL — regressions detected:")
+        for r in regressions:
+            print(f"    - {r}")
+        return 1
+    print("  PASS — no regressions against baseline.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -1176,36 +1285,46 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # Sizing/load flags default to None so _apply_scale() can tell "unset" from an
+    # explicit value and let --scale supply the rest.
+    def _add_scale(p, with_sizes, with_load):
+        p.add_argument("--scale", choices=sorted(SCALES), help="Named size/load profile.")
+        if with_sizes:
+            p.add_argument("--users", type=int, default=None)
+            p.add_argument("--domains", type=int, default=None)
+            p.add_argument("--resources", type=int, default=None)
+        if with_load:
+            p.add_argument("--base-url", default="http://localhost:8090/api/v1.0")
+            p.add_argument("--concurrency", type=int, default=None)
+            p.add_argument("--duration", type=int, default=None)
+            p.add_argument("--baseline", help="Path to a baseline JSON file.")
+            p.add_argument("--check", action="store_true",
+                           help="Compare results against --baseline and exit non-zero on regression.")
+            p.add_argument("--tolerance", type=float, default=0.2,
+                           help="Allowed RPS drop / latency growth fraction (default 0.2 = 20%%).")
+
     # Setup subcommand.
     setup_parser = subparsers.add_parser("setup", help="Create test data in the database.")
-    setup_parser.add_argument("--users", type=int, default=50_000, help="Number of users to create.")
-    setup_parser.add_argument("--domains", type=int, default=200, help="Number of root domains to create.")
-    setup_parser.add_argument("--resources", type=int, default=1_000_000, help="Total resources to create.")
+    _add_scale(setup_parser, with_sizes=True, with_load=False)
 
     # Run subcommand.
     run_parser = subparsers.add_parser("run", help="Run load scenarios against a live server.")
-    run_parser.add_argument("--base-url", default="http://localhost:8090/api/v1.0", help="API base URL.")
-    run_parser.add_argument("--concurrency", type=int, default=100, help="Concurrent workers/requests.")
-    run_parser.add_argument("--duration", type=int, default=60, help="Duration (seconds) for mixed scenario.")
+    _add_scale(run_parser, with_sizes=False, with_load=True)
 
     # All subcommand.
     all_parser = subparsers.add_parser("all", help="Run setup then run.")
-    all_parser.add_argument("--users", type=int, default=50_000)
-    all_parser.add_argument("--domains", type=int, default=200)
-    all_parser.add_argument("--resources", type=int, default=1_000_000)
-    all_parser.add_argument("--base-url", default="http://localhost:8090/api/v1.0")
-    all_parser.add_argument("--concurrency", type=int, default=100)
-    all_parser.add_argument("--duration", type=int, default=60)
+    _add_scale(all_parser, with_sizes=True, with_load=True)
 
     args = parser.parse_args()
+    _apply_scale(args)
 
     if args.command == "setup":
         cmd_setup(args)
     elif args.command == "run":
-        cmd_run(args)
+        sys.exit(cmd_run(args))
     elif args.command == "all":
         cmd_setup(args)
-        cmd_run(args)
+        sys.exit(cmd_run(args))
 
 
 if __name__ == "__main__":

@@ -1,7 +1,10 @@
 # Modernisation Phase 1
 
 **Date:** 2026-05-07  
-**Status:** In progress
+**Status:** ✅ Completed (verified 2026-07). All items below are implemented; note the repo
+was later restructured so `app/src/dominion/` paths are now `dominion/` (settings/celery/
+asgi/wsgi under `dominion/conf/`). Django is now 6.0. This doc is historical — do not treat
+as an active requirement.
 
 ## Motivation
 

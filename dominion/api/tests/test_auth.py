@@ -28,6 +28,11 @@ class BasicAuthTestCase(BaseTestCase):
         result = await basic_auth("owner", "password", required_scopes=["some_scope"])
         self.assertIsNotNone(result)
 
+    async def test_inactive_user_returns_none(self):
+        await type(self.owner).objects.filter(id=self.owner.id).aupdate(is_active=False)
+        result = await basic_auth("owner", "password")
+        self.assertIsNone(result)
+
 
 class ApiKeyAuthTestCase(BaseTestCase):
     async def test_valid_api_key_returns_user_info(self):
@@ -49,3 +54,8 @@ class ApiKeyAuthTestCase(BaseTestCase):
     async def test_required_scopes_ignored(self):
         result = await apikey_auth(str(self.owner.api_key), required_scopes=["x"])
         self.assertIsNotNone(result)
+
+    async def test_inactive_user_returns_none(self):
+        await type(self.owner).objects.filter(id=self.owner.id).aupdate(is_active=False)
+        result = await apikey_auth(str(self.owner.api_key))
+        self.assertIsNone(result)

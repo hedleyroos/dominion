@@ -10,8 +10,8 @@ Version: **0.1.14**
 
 | Component | Technology |
 |-----------|-----------|
-| Web framework | Django 5.2 LTS |
-| REST API | Connexion 2 (OpenAPI 3.0 → Flask) |
+| Web framework | Django 6.0 |
+| REST API | Connexion 3 (OpenAPI 3.0, `AsyncApp` on Starlette/ASGI) |
 | Serialization | Django REST Framework |
 | OAuth2 / OIDC | django-oauth-toolkit + mozilla-django-oidc |
 | Async tasks | Celery 5 |
@@ -52,15 +52,24 @@ tox -e app -- -k test_domaina_read
 
 ---
 
-## Async Groundwork
+## Async & Application Topology
 
-Views are currently synchronous (WSGI). The groundwork for async is in place:
+Dominion serves **two separate applications**:
 
-- `dominion/conf/asgi.py` exposes a standard ASGI application.
-- `dominion/decorators.py` provides a `@django()` decorator that refreshes database connections for both sync and async callables.
-- `pytest-asyncio` is installed and configured.
+1. **The REST API** — a Connexion 3 `AsyncApp` (`main.py`, `main:app`) on Starlette/ASGI.
+   Every API handler in `dominion/api/` is `async def`. Run with uvicorn (see run scripts).
+2. **Django admin, OIDC provider, registration, `/healthz`** — the standard Django app
+   (`dominion/conf/wsgi.py` / `asgi.py`, routed by `dominion/conf/urls.py`).
 
-Full async view conversion is deferred to a future phase.
+In production, both must be served (typically behind one reverse proxy). The
+`DjangoConnectionsMiddleware` in `main.py` refreshes DB connections and resets the
+request-scoped permission cache at each API request boundary; `dominion/decorators.py`
+provides a `@django()` decorator for the same in other contexts.
+
+`transaction.atomic` is **not usable in async ORM code**; atomicity in the async API comes
+from synchronous model `save()` methods (wrapped in `transaction.atomic()`, invoked via
+`asave()`/`sync_to_async`) and transaction-free patterns (`get_or_create`, compare-and-set
+`update()`, DB constraints).
 
 ---
 
@@ -243,9 +252,27 @@ Permission checks are implemented in `dominion.utils` and work recursively over 
    - Check whether any `ResourceRolePermission` row for the traversed resources maps to a role the user holds on the domain (`user_has_role_for_domain`).
    - Fall back to `user_has_permission_for_domain` on the resource's owning domain.
 
-### Performance Note
+### Performance & Caching
 
-Each check may issue multiple recursive SQL queries. There are no caches today; this is a known limitation flagged in the source with `TODO` comments.
+Each cold check issues queries proportional to tree depth. Two cache layers reduce this:
+
+1. **Request-scoped cache** — a `contextvars`-backed dict (`dominion.utils._cache`), one per
+   ASGI request, so repeated checks over the same tree within a request don't re-query.
+2. **Cross-request cache** — `django.core.cache` (Memcached in production, LocMemCache in
+   dev/tests) keyed by a global *rules version* and a per-user version. Mutations bump the
+   relevant version, instantly invalidating affected entries.
+
+Invalidation fires from **`post_save`/`post_delete` signals** on the assignment and
+role/permission models (`dominion/models.py`), so every mutation path — the API, the Django
+admin, and host-project ORM writes — invalidates correctly. The API endpoints also call the
+invalidators explicitly (a redundant, harmless delete).
+
+Query counts at various tree depths are locked by regression tests in
+`dominion/tests/test_query_counts.py` (`tox -e perf`) so an accidental N+1 fails CI.
+
+> Known hot spot: the resource→domain transition in `user_has_permission_for_resource` still
+> has an N+1 (a candidate for a future set-based/CTE optimization); the regression test caps
+> it so it cannot silently worsen.
 
 ---
 
@@ -381,15 +408,19 @@ All outbound email is queued through Celery rather than sent inline. The system 
 
 ### Model
 
-`dominion.mail.EmailMessage` — stores each email as a pickled object.
+`dominion.mail.EmailMessage` — stores each email in **structured fields** (the earlier
+pickled-blob representation was migrated away for safety; migrations 0004–0006).
 
 | Field | Type |
 |-------|------|
-| `pickled` | BinaryField — a `pickle.dumps()` of a `django.core.mail.EmailMessage` |
+| `subject`, `from_email` | CharField |
+| `body` | TextField |
+| `to`, `cc`, `bcc`, `reply_to`, `headers` | JSON/structured fields |
 | `sent` | BooleanField (indexed) |
 | `created` | DateTimeField auto-now-add (indexed) |
 
-The `unpickled` property deserializes on access.
+`dominion/mail/tasks.py` reconstructs a `django.core.mail.EmailMessage` from these fields
+when sending.
 
 ### Backends
 

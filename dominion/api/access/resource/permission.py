@@ -22,8 +22,7 @@ async def get(user_id, resource_id, permission, user, token_info, **kwargs):
 
     resource = await Resource.objects.select_related("domain").filter(id=resource_id).afirst()
     if resource is None:
-        # 400 because this is technically a bad request
-        return {"message": RESOURCE_NOT_FOUND.format(resource_id)}, 400
+        return {"message": RESOURCE_NOT_FOUND.format(resource_id)}, 404
 
     # Only users with domain check_access permission may perform this query
     if not await user_has_permission_for_domain(user.id, "check_access", resource.domain.id):

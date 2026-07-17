@@ -1,3 +1,7 @@
+from asgiref.sync import async_to_sync, sync_to_async
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+
 from dominion.tests.base import BaseTestCase
 from dominion import models
 from dominion.utils import (
@@ -12,6 +16,7 @@ from dominion.utils import (
     get_user_domains_sync,
     invalidate_rules_permissions,
     invalidate_user_permissions,
+    reset_request_cache,
     resource_roles_permissions_mapping,
     resource_roles_permissions_mapping_sync,
     user_has_permission_for_domain,
@@ -202,26 +207,105 @@ class ResourceRolesPermissionsMappingTestCase(BaseTestCase):
 
 
 class CrossRequestCacheTestCase(BaseTestCase):
-    """P3.1 — cross-request permission cache: results are stored and invalidated correctly."""
+    """P3.1 — cross-request permission cache actually caches, and invalidation forces recompute.
 
-    async def test_permission_result_is_cached_across_calls(self):
-        # Warm the cache then call again; both should return the same value.
-        result1 = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
-        result2 = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
-        self.assertEqual(result1, result2)
-        self.assertTrue(result1)
+    Each logical "request" is delineated with reset_request_cache(), mirroring the
+    per-request context isolation that main.py's middleware provides in production.
+    django_assert_num_queries proves cache hits avoid the database entirely.
+    """
 
-    async def test_invalidate_user_permissions_does_not_break_result(self):
-        await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
-        await invalidate_user_permissions(str(self.owner.id))
-        result = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+    def setUp(self):
+        super().setUp()
+        # LocMemCache is process-global; clear it so query-count assertions are not
+        # contaminated by cached results from other tests.
+        from django.core.cache import cache as django_cache
+        django_cache.clear()
+        reset_request_cache()
+
+    # These tests assert exact DB query counts, which CaptureQueriesContext can only
+    # do from a synchronous context. Each async_to_sync() call runs the thread-sensitive
+    # ORM work on the test thread (so the query capture sees it) and constitutes one
+    # logical "request" — its request-scoped cache does not leak to the next call.
+
+    def _check(self, user_id, perm, domain_id):
+        return async_to_sync(user_has_permission_for_domain)(user_id, perm, domain_id)
+
+    def test_cold_call_hits_db(self):
+        with CaptureQueriesContext(connection) as ctx:
+            result = self._check(self.owner.id, "read", self.domaina.id)
         self.assertTrue(result)
+        self.assertGreater(len(ctx.captured_queries), 0)
 
-    async def test_invalidate_rules_permissions_does_not_break_result(self):
-        await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
-        await invalidate_rules_permissions()
-        result = await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+    def test_cross_request_cache_hit_avoids_db(self):
+        # First request populates the Django cache.
+        self._check(self.owner.id, "read", self.domaina.id)
+        # Second request: with a fresh request-scoped cache the result must still
+        # resolve from the Django cache without touching the database.
+        reset_request_cache()
+        with CaptureQueriesContext(connection) as ctx:
+            result = self._check(self.owner.id, "read", self.domaina.id)
         self.assertTrue(result)
+        self.assertEqual(len(ctx.captured_queries), 0)
+
+    def test_rules_invalidation_forces_recompute(self):
+        self._check(self.owner.id, "read", self.domaina.id)
+        async_to_sync(invalidate_rules_permissions)()
+        # Next request must recompute (hit the DB again) rather than serve a stale hit.
+        reset_request_cache()
+        with CaptureQueriesContext(connection) as ctx:
+            result = self._check(self.owner.id, "read", self.domaina.id)
+        self.assertTrue(result)
+        self.assertGreater(len(ctx.captured_queries), 0)
+
+    def test_user_invalidation_forces_recompute(self):
+        self._check(self.owner.id, "read", self.domaina.id)
+        async_to_sync(invalidate_user_permissions)(str(self.owner.id))
+        reset_request_cache()
+        with CaptureQueriesContext(connection) as ctx:
+            result = self._check(self.owner.id, "read", self.domaina.id)
+        self.assertTrue(result)
+        self.assertGreater(len(ctx.captured_queries), 0)
+
+    def test_mutation_via_orm_invalidates_cache(self):
+        """A6 — a rule change made outside the API (admin / host-project ORM) is reflected.
+
+        jan has only the customviewer (read) role on domaina, so 'delete' is denied
+        and that denial is cached. Granting customviewer the delete permission via a
+        plain ORM create must fire the invalidation signal so the next request sees True.
+        """
+        self.assertFalse(self._check(self.jan.id, "delete", self.domaina.id))
+
+        permission_delete = models.Permission.objects.get(code="delete")
+        role_customviewer = models.Role.objects.get(code="customviewer")
+        # Plain ORM create — no explicit invalidate_* call, exactly like admin_forms.
+        models.DomainRolePermission.objects.create(
+            domain=self.domaina, role=role_customviewer, permission=permission_delete
+        )
+
+        reset_request_cache()
+        self.assertTrue(self._check(self.jan.id, "delete", self.domaina.id))
+
+
+class RequestScopedCacheIsolationTestCase(BaseTestCase):
+    """The request-scoped cache must not leak across request boundaries."""
+
+    def setUp(self):
+        super().setUp()
+        from django.core.cache import cache as django_cache
+        django_cache.clear()
+        reset_request_cache()
+
+    async def test_reset_clears_request_scoped_entries(self):
+        from dominion.utils import _request_cache
+
+        await user_has_permission_for_domain(self.owner.id, "read", self.domaina.id)
+        # Something is cached for this context.
+        self.assertIsNotNone(_request_cache.get())
+        self.assertGreater(len(_request_cache.get()), 0)
+
+        reset_request_cache()
+        # After a reset the next access starts from an empty cache.
+        self.assertIsNone(_request_cache.get())
 
 
 class SyncUtilVariantsTestCase(BaseTestCase):
@@ -260,5 +344,54 @@ class SyncUtilVariantsTestCase(BaseTestCase):
     def test_resource_roles_permissions_mapping_sync_returns_list(self):
         resource = models.Resource.objects.select_related("domain").get(id=self.domaina_resourcea.id)
         mapping = resource_roles_permissions_mapping_sync(resource)
+        self.assertIsInstance(mapping, list)
+
+
+class AsyncMatrixHelperParityTestCase(BaseTestCase):
+    """A10 — the async matrix helpers (public API for embedded host projects) must
+    traverse the parent chain without raising SynchronousOnlyOperation and must
+    return the same roles/permissions as their sync counterparts.
+
+    domainaaa is a grandchild (domainaaa -> domainaa -> domaina), so these calls
+    exercise the multi-level async parent walk that previously crashed.
+    """
+
+    def _codes(self, objs):
+        return sorted(o.code for o in objs)
+
+    async def test_get_domain_roles_matches_sync_at_depth(self):
+        from dominion.utils import _get_domain_roles_sync
+        domain = await models.Domain.objects.select_related("parent").aget(id=self.domainaaa.id)
+        async_roles = await get_domain_roles(domain)
+        sync_roles = await sync_to_async(_get_domain_roles_sync)(domain)
+        self.assertEqual(self._codes(async_roles), self._codes(sync_roles))
+
+    async def test_get_domain_permissions_matches_sync_at_depth(self):
+        from dominion.utils import _get_domain_permissions_sync
+        domain = await models.Domain.objects.select_related("parent").aget(id=self.domainaaa.id)
+        async_perms = await get_domain_permissions(domain)
+        sync_perms = await sync_to_async(_get_domain_permissions_sync)(domain)
+        self.assertEqual(self._codes(async_perms), self._codes(sync_perms))
+
+    async def test_get_resource_roles_matches_sync_at_depth(self):
+        from dominion.utils import _get_resource_roles_sync
+        # domaina_resourceaa has a parent (domaina_resourcea), so this walks the
+        # resource tree then transitions to the domain tree.
+        resource = await models.Resource.objects.select_related("domain").aget(id=self.domaina_resourceaa.id)
+        async_roles = await get_resource_roles(resource)
+        sync_roles = await sync_to_async(_get_resource_roles_sync)(resource)
+        self.assertEqual(self._codes(async_roles), self._codes(sync_roles))
+
+    async def test_get_resource_permissions_matches_sync_at_depth(self):
+        from dominion.utils import _get_resource_permissions_sync
+        resource = await models.Resource.objects.select_related("domain").aget(id=self.domaina_resourceaa.id)
+        async_perms = await get_resource_permissions(resource)
+        sync_perms = await sync_to_async(_get_resource_permissions_sync)(resource)
+        self.assertEqual(self._codes(async_perms), self._codes(sync_perms))
+
+    async def test_mapping_helpers_run_at_depth(self):
+        from dominion.utils import domain_roles_permissions_mapping
+        domain = await models.Domain.objects.select_related("parent").aget(id=self.domainaaa.id)
+        mapping = await domain_roles_permissions_mapping(domain)
         self.assertIsInstance(mapping, list)
 

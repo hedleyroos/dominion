@@ -45,6 +45,8 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/ErrorResponse"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
 
     /user/login:    
         post:
@@ -72,6 +74,8 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/ErrorResponse"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
 
     /user/by-api-key/{api_key}:
         parameters:
@@ -107,6 +111,8 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/ErrorResponse"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
     /user:
 
         post:
@@ -583,6 +589,12 @@ paths:
             responses:
                 "201":
                     description: User Domain Role created successfully
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/ValidationError"
 
     /userdomainrole/{id}:
         get:
@@ -697,6 +709,12 @@ paths:
             responses:
                 "201":
                     description: Domain Role Permission created successfully
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/ValidationError"
 
     /domainrolepermission/{id}:
         get:
@@ -797,6 +815,12 @@ paths:
             responses:
                 "201":
                     description: User Resource Role created successfully
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/ValidationError"
 
     /userresourcerole/{id}:
         get:
@@ -912,6 +936,12 @@ paths:
             responses:
                 "201":
                     description: Resource Role Permission created successfully
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/ValidationError"
 
     /resourcerolepermission/{id}:
         get:
@@ -1032,6 +1062,44 @@ paths:
                             schema:
                                 $ref: "#/components/schemas/ErrorResponse"
 
+    /access/domain/permissions/{user_id}/{domain_id}:
+        get:
+            tags:
+                - Access
+            summary: Return all effective permissions a user has on a domain
+            description:
+                Introspection — return the full set of permission codes the user
+                effectively holds on the domain (direct plus inherited). Only users
+                who have the `check_access` permission on the domain may make this call.
+            parameters:
+                - name: user_id
+                  in: path
+                  description: User ID
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+                - name: domain_id
+                  in: path
+                  description: Domain ID
+                  required: true
+                  schema:
+                    type: string
+                    format: uuid
+            responses:
+                "200":
+                    description: The user's effective permissions on the domain.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/EffectivePermissions"
+                "400":
+                    $ref: "#/components/responses/ValidationError"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+
     /access/resource/permission/{user_id}/{resource_id}/{permission}:
         get:
             tags:
@@ -1096,6 +1164,48 @@ components:
             in: header
             x-apikeyInfoFunc: dominion.api.auth.apikey_auth
 
+    responses:
+
+        # Reusable error responses. Every authenticated operation can return 401/403;
+        # single-item operations can return 404; rate-limited endpoints return 429;
+        # unique-constrained creates (role/permission assignments) can return 409.
+        Unauthorized:
+            description: Authentication failed or the account is inactive.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+        Forbidden:
+            description: The authenticated user lacks the required permission.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+        NotFound:
+            description: The requested item does not exist.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+        Conflict:
+            description: The item already exists (unique constraint).
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+        TooManyRequests:
+            description: Rate limit exceeded.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+        ValidationError:
+            description: Invalid input.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+
     schemas:
 
         ErrorResponse:
@@ -1103,8 +1213,14 @@ components:
             properties:
                 message:
                     type: string
+            # Field-level validation errors are returned as {field: [messages...]} , so
+            # additional properties may be either a string or an array of strings.
             additionalProperties:
-                type: string
+                oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                          type: string
 
         ######
         # User
@@ -1424,4 +1540,22 @@ components:
                     readOnly: true
                 message:
                     type: string
+            additionalProperties: false
+
+        EffectivePermissions:
+            type: object
+            properties:
+                user:
+                    type: string
+                    format: uuid
+                    readOnly: true
+                domain:
+                    type: string
+                    format: uuid
+                    readOnly: true
+                permissions:
+                    type: array
+                    items:
+                        type: string
+                    readOnly: true
             additionalProperties: false

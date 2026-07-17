@@ -8,7 +8,7 @@ async def basic_auth(username, password, required_scopes=None):
     User = get_user_model()
 
     user = await User.objects.filter(username=username).afirst()
-    if user is None:
+    if user is None or not user.is_active:
         return None
 
     password_ok = await sync_to_async(user.check_password)(password)
@@ -22,7 +22,7 @@ async def apikey_auth(api_key, required_scopes=None):
     User = get_user_model()
 
     user = await User.objects.filter(api_key=api_key).afirst()
-    if user is None:
+    if user is None or not user.is_active:
         return None
 
     return {"uid": user.username, "scope": "", "user": user}

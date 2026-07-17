@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/4.0/ref/settings/
 from pathlib import Path
 
 from celery.schedules import crontab
+from django.core.exceptions import ImproperlyConfigured
 from environs import Env
 
 
@@ -25,14 +26,32 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-# Override SECRET_KEY via environment variable in production.
-SECRET_KEY = env.str("SECRET_KEY", "django-insecure-^r#(8oga*$i%x7#-xd*et27oqihs*a5b84&ms@@aez9xhu7a7%")
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", True)
 
-ALLOWED_HOSTS = ["*"]
+# SECURITY WARNING: keep the secret key used in production secret!
+# In development an insecure default is provided so the app runs without config.
+# In production (DEBUG=False) SECRET_KEY must be supplied via the environment; we
+# fail fast rather than silently ship the well-known insecure key.
+_INSECURE_SECRET_KEY = "django-insecure-^r#(8oga*$i%x7#-xd*et27oqihs*a5b84&ms@@aez9xhu7a7%"
+if DEBUG:
+    SECRET_KEY = env.str("SECRET_KEY", _INSECURE_SECRET_KEY)
+else:
+    SECRET_KEY = env.str("SECRET_KEY", None)
+    if not SECRET_KEY or SECRET_KEY == _INSECURE_SECRET_KEY:
+        raise ImproperlyConfigured(
+            "SECRET_KEY environment variable must be set to a unique secret value "
+            "when DEBUG is False."
+        )
+
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", ["*"])
+
+# CORS origins for the Connexion API (consumed in main.py). Defaults to a wildcard
+# in development; set CORS_ALLOWED_ORIGINS (comma-separated) in production. A wildcard
+# origin cannot be combined with credentialed requests, so credentials are only
+# enabled when an explicit origin list is configured.
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", ["*"])
+CORS_ALLOW_CREDENTIALS = env.bool("CORS_ALLOW_CREDENTIALS", False)
 
 
 # Application definition

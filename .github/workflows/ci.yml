@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+
+jobs:
+  tests:
+    name: Tests (sqlite + postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: dominion_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      memcached:
+        image: memcached:1.6
+        ports:
+          - 11211:11211
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tox
+        run: pip install tox
+
+      # sqlite envs (fast) + postgres envs (against the service container above) +
+      # the perf query-count regression gate (no server needed).
+      - name: Run test suite
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/dominion_test
+          MEMCACHED_LOCATION: localhost:11211
+        run: tox -e app,api,app-postgres,api-postgres,perf
+
+  perf-smoke:
+    name: Perf load smoke (small scale)
+    runs-on: ubuntu-latest
+    # Best-effort smoke: exercises the full load harness end-to-end against a live
+    # server to catch crashes / 500s / protocol errors. It does NOT gate on absolute
+    # latency numbers, which are runner-dependent — that's what a pinned per-environment
+    # baseline + `--check` is for once a stable runner baseline exists.
+    continue-on-error: true
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: dominion_perf
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      memcached:
+        image: memcached:1.6
+        ports:
+          - 11211:11211
+
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/dominion_perf
+      MEMCACHED_LOCATION: localhost:11211
+      SECRET_KEY: ci-perf-smoke-key
+      DEBUG: "False"
+      DJANGO_SETTINGS_MODULE: dominion.conf.settings
+      DJANGO_ALLOW_ASYNC_UNSAFE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Migrate
+        run: python manage.py migrate --noinput
+
+      - name: Seed small-scale perf data
+        run: python perf/perfload.py setup --scale small
+
+      - name: Start server
+        run: |
+          python -m uvicorn main:app --host 127.0.0.1 --port 8090 --log-level warning &
+          echo $! > /tmp/uvicorn.pid
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8090/api/v1.0/role -H "X-Auth: x" || true)
+            if [ "$code" = "200" ] || [ "$code" = "401" ]; then echo "server up"; break; fi
+            sleep 1
+          done
+
+      - name: Run small-scale load smoke
+        run: python perf/perfload.py run --scale small --base-url http://127.0.0.1:8090/api/v1.0
+
+      - name: Stop server
+        if: always()
+        run: kill "$(cat /tmp/uvicorn.pid)" || true
