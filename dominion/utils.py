@@ -253,69 +253,154 @@ async def user_has_permission_for_domain(user_id, permission_code, domain_id):
     return result
 
 
-async def _user_has_permission_for_resource(user_id, permission_code, resource_id, resource_ids):
-    # Cache each recursive node in the request cache so sibling calls within the
-    # same request short-circuit immediately.
+async def _get_resource_ancestors(resource_id):
+    """Return the full resource ancestor chain [resource, parent, …, root]."""
+    cache = _cache()
+    key = ("resource_ancestors", resource_id)
+    if key in cache:
+        return cache[key]
+
+    ancestors = []
+    current_id = resource_id
+    while current_id:
+        resource = await models.Resource.objects.select_related("domain").aget(id=current_id)
+        ancestors.append(resource)
+        current_id = resource.parent_id
+
+    cache[key] = ancestors
+    return ancestors
+
+
+async def _batch_domain_has_permission_for_role(domain_id, permission_code, role_codes):
+    """Walk the domain tree once, returning True if any role in *role_codes*
+    has *permission_code* on *domain_id* or an ancestor."""
+    if not role_codes:
+        return False
+
+    current_id = domain_id
+    while current_id:
+        if await models.DomainRolePermission.objects.filter(
+            domain__id=current_id,
+            role__code__in=role_codes,
+            permission__code=permission_code,
+        ).aexists():
+            return True
+
+        if await models.DomainPermission.objects.filter(
+            domain__id=current_id,
+            permission__code=permission_code,
+            inherit=False,
+        ).aexists():
+            return False
+
+        domain = await models.Domain.objects.aget(id=current_id)
+        current_id = domain.parent_id
+
+    return False
+
+
+async def _batch_user_has_role_for_domain(user_id, domain_id, role_codes):
+    """Walk the domain tree once, returning True if the user has any role in
+    *role_codes* on *domain_id* or an ancestor."""
+    if not role_codes:
+        return False
+
+    current_id = domain_id
+    while current_id:
+        if await models.UserDomainRole.objects.filter(
+            user__id=user_id,
+            domain__id=current_id,
+            role__code__in=role_codes,
+        ).aexists():
+            return True
+
+        domain = await models.Domain.objects.aget(id=current_id)
+        current_id = domain.parent_id
+
+    return False
+
+
+async def _user_has_permission_for_resource(user_id, permission_code, resource_id, _resource_ids=None):
+    """Check whether *user_id* holds *permission_code* on *resource_id*.
+
+    The check walks the resource-ancestry chain in two phases:
+
+    1. **Resource phase** — for every ancestor resource (including the target),
+       check whether the user has an explicit UserResourceRole that is granted
+       the permission via a ResourceRolePermission.  Also check for
+       inheritance-blocking ResourcePermission records at each level.
+
+    2. **Domain bridge** — at the root resource (no parent), transition to the
+       domain tree and check domain-level roles and permissions for the user.
+
+    The old per-level recursive query pattern has been replaced with a single
+    ancestor pre-fetch and batched domain-tree walks to eliminate the N+1 loops
+    that dominated this function at scale.
+    """
     request_cache = _cache()
     cache_key = ("_uhp_resource", user_id, permission_code, resource_id)
     if cache_key in request_cache:
         return request_cache[cache_key]
 
-    # Check for user roles declared on the resource
+    # Phase 1 — pre-load the resource ancestor chain (requests are cached).
+    ancestors = await _get_resource_ancestors(resource_id)
+    ancestor_ids = {str(r.id) for r in ancestors}
+
+    # Check for explicit user roles on any ancestor resource.
     user_resource_roles = [
-        o.role
-        async for o in models.UserResourceRole.objects.filter(
-            user__id=user_id, resource__id__in=resource_ids
+        urr.role
+        async for urr in models.UserResourceRole.objects.filter(
+            user__id=user_id, resource__id__in=ancestor_ids,
         ).select_related("role")
     ]
     if user_resource_roles:
-        for_resource = models.ResourceRolePermission.objects.filter(
-            resource__id__in=resource_ids, role__in=user_resource_roles, permission__code=permission_code
-        )
-        if await for_resource.aexists():
+        if await models.ResourceRolePermission.objects.filter(
+            resource__id__in=ancestor_ids,
+            role__in=user_resource_roles,
+            permission__code=permission_code,
+        ).aexists():
             request_cache[cache_key] = True
             return True
 
-    # Check acquisition. Only if an item exists and specifically opts out of inherit
-    # do we return false.
-    cannot_inherit = await models.ResourcePermission.objects.filter(
-        resource__id=resource_id, permission__code=permission_code, inherit=False
-    ).aexists()
-    if cannot_inherit:
-        request_cache[cache_key] = False
-        return False
+    # Inheritance blocks — stop at the first ancestor that blocks inheritance.
+    for ancestor in ancestors:
+        if await models.ResourcePermission.objects.filter(
+            resource__id=ancestor.id,
+            permission__code=permission_code,
+            inherit=False,
+        ).aexists():
+            request_cache[cache_key] = False
+            return False
 
-    # We can inherit. If resource has a parent then the resource ancestry determines whether
-    # we have permission or not. If resource has no parent then the domain ancestry
-    # determines whether we have permission or not.
-    resource = await models.Resource.objects.select_related("domain").aget(id=resource_id)
-    if resource.parent_id is not None:
-        result = await _user_has_permission_for_resource(user_id, permission_code, resource.parent_id, resource_ids | {resource.parent_id})
-        request_cache[cache_key] = result
-        return result
+    # Phase 2 — bridge to the domain tree.
+    root_resource = ancestors[-1]
+    domain_id = root_resource.domain_id
 
-    # This is the most difficult part because we transition from traversing upward over resources
-    # to traversing upward over domains.
-
-    # This set of roles satisfies the required permission. The user already has a role declared
-    # on the resource or its traversable parents, so we don't need to consider the user when
-    # checking the domains.
-    for role in user_resource_roles:
-        if await domain_has_permission_for_role(resource.domain_id, permission_code, role.code):
+    # 2a — roles the user *already has* on the resource chain.  The domain only
+    #      needs to grant those roles the required permission.
+    if user_resource_roles:
+        role_codes = list({r.code for r in user_resource_roles})
+        if await _batch_domain_has_permission_for_role(domain_id, permission_code, role_codes):
             request_cache[cache_key] = True
             return True
 
-    # Roles and permissions set on the resource or its traversable parents. Here we do consider
-    # the user when checking the domain.
-    async for obj in models.ResourceRolePermission.objects.filter(
-        resource__id__in=resource_ids, permission__code=permission_code
-    ).select_related("role"):
-        if await user_has_role_for_domain(user_id, obj.role.code, resource.domain_id):
+    # 2b — roles that are granted the permission on the resource chain.  The
+    #      user only needs to hold one of those roles on the domain.
+    rrp_roles = [
+        rrp.role
+        async for rrp in models.ResourceRolePermission.objects.filter(
+            resource__id__in=ancestor_ids,
+            permission__code=permission_code,
+        ).select_related("role")
+    ]
+    if rrp_roles:
+        role_codes = list({r.code for r in rrp_roles})
+        if await _batch_user_has_role_for_domain(user_id, domain_id, role_codes):
             request_cache[cache_key] = True
             return True
 
-    # Simple recursion
-    result = await user_has_permission_for_domain(user_id, permission_code, resource.domain_id)
+    # 2c — fall back to the standard domain permission check (cached).
+    result = await user_has_permission_for_domain(user_id, permission_code, domain_id)
     request_cache[cache_key] = result
     return result
 
@@ -333,7 +418,7 @@ async def user_has_permission_for_resource(user_id, permission_code, resource_id
         request_cache[request_key] = cached
         return cached
 
-    result = await _user_has_permission_for_resource(user_id, permission_code, resource_id, {resource_id})
+    result = await _user_has_permission_for_resource(user_id, permission_code, resource_id)
     request_cache[request_key] = result
     await django_cache.aset(cross_key, result, _PERM_CACHE_TTL)
     return result

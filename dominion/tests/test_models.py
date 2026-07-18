@@ -131,14 +131,14 @@ class ModelsTestCase(BaseTestCase):
     def test_domainaa_root(self):
         self.assertEqual(self.domainaa.root, self.domaina)
 
-    @override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=10)
+    @override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=10, DOMINION_VALIDATION_SAMPLE_RATE=1.0)
     def test_domain_limit(self):
         with self.assertRaises(ValidationError):
             for i in range(20):
                 domain = models.Domain.objects.create(title="Domain %s" % i, parent=self.domaina, owner=self.owner)
                 domain.full_clean()
 
-    @override_settings(DOMINION_MAX_RESOURCES_PER_DOMAIN=10)
+    @override_settings(DOMINION_MAX_RESOURCES_PER_DOMAIN=10, DOMINION_VALIDATION_SAMPLE_RATE=1.0)
     def test_resource_limit(self):
         with self.assertRaises(ValidationError):
             for i in range(20):

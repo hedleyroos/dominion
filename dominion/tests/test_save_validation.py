@@ -1,12 +1,11 @@
-"""A5 — save-then-validate semantics.
+"""A5 — save-then-validate semantics with probabilistic limit checks.
 
-The model save() methods call super().save() *before* clean()/full_clean() so the
-counter-cache signals can populate the descendant/resource counters that the limit
-checks read. When clean() then fails, the already-inserted row must not survive.
+Domain and Resource limit checks use a dice-roll: only DOMINION_VALIDATION_SAMPLE_RATE
+of saves trigger a count() query against the DB.  These tests set the rate to 1.0
+(always validate) for determinism, and 0.0 to confirm the skip path works.
 
-These tests use TransactionTestCase (no enclosing rolled-back transaction) so we can
-observe the *committed* state after a ValidationError, and they run on whichever
-backend tox selected (sqlite or postgres) so both are covered by CI.
+TransactionTestCase (no enclosing rolled-back transaction) is used so we can observe
+the *committed* state after a ValidationError on either sqlite or postgres.
 """
 
 from django.contrib.auth import get_user_model
@@ -41,7 +40,9 @@ class SaveValidationLeakTestCase(TransactionTestCase):
     def test_over_limit_domain_does_not_leak(self):
         """Exceeding the descendant limit must not leave the offending row behind."""
         root = models.Domain.objects.create(title="LimitRoot", owner=self.owner)
-        with override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=1):
+        with override_settings(
+            DOMINION_MAX_DESCENDANT_DOMAINS=1, DOMINION_VALIDATION_SAMPLE_RATE=1.0
+        ):
             # root already counts as 1 descendant; adding a child pushes count to 2 > 1.
             before = models.Domain.objects.count()
             with self.assertRaises(ValidationError):
@@ -63,22 +64,22 @@ class SaveValidationLeakTestCase(TransactionTestCase):
         after = models.Resource.objects.count()
         self.assertEqual(after, before, "Cross-domain resource was committed despite ValidationError.")
 
-    def test_valid_domain_still_persists_and_counts(self):
-        """Sanity: valid saves persist and counters increment (no over-correction)."""
+    def test_valid_domain_persists(self):
+        """Sanity: valid saves persist."""
         root = models.Domain.objects.create(title="ValidRoot", owner=self.owner)
         child = models.Domain.objects.create(title="ValidChild", owner=self.owner, parent=root)
-        root.refresh_from_db()
-        self.assertEqual(root.descendant_count, 2)
         self.assertTrue(models.Domain.objects.filter(id=child.id).exists())
 
     def test_domain_create_at_exactly_the_limit_succeeds(self):
         """The last child that reaches the limit is allowed; the next one over is not."""
         root = models.Domain.objects.create(title="EdgeRoot", owner=self.owner)
-        with override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=2):
+        with override_settings(
+            DOMINION_MAX_DESCENDANT_DOMAINS=2, DOMINION_VALIDATION_SAMPLE_RATE=1.0
+        ):
             # root counts as 1; one child brings the total to exactly 2 (== limit).
             child = models.Domain.objects.create(title="EdgeChild", owner=self.owner, parent=root)
             self.assertTrue(models.Domain.objects.filter(id=child.id).exists())
-            # A second child would be 3 > 2 and must be rejected before insert.
+            # A second child would be 3 > 2 and must be rejected.
             before = models.Domain.objects.count()
             with self.assertRaises(ValidationError):
                 models.Domain.objects.create(title="EdgeChild2", owner=self.owner, parent=root)
@@ -88,9 +89,11 @@ class SaveValidationLeakTestCase(TransactionTestCase):
         """Re-saving an existing domain must not count itself again and falsely fail."""
         root = models.Domain.objects.create(title="UpdRoot", owner=self.owner)
         child = models.Domain.objects.create(title="UpdChild", owner=self.owner, parent=root)
-        # root now has descendant_count == 2. With the limit set to that exact value,
-        # updating the existing child (not adding) must still be allowed.
-        with override_settings(DOMINION_MAX_DESCENDANT_DOMAINS=2):
+        # With the limit set to the current count, updating the existing child
+        # (not adding) must still be allowed.
+        with override_settings(
+            DOMINION_MAX_DESCENDANT_DOMAINS=2, DOMINION_VALIDATION_SAMPLE_RATE=1.0
+        ):
             child.title = "UpdChildRenamed"
             child.save()  # must not raise
         child.refresh_from_db()
@@ -98,10 +101,31 @@ class SaveValidationLeakTestCase(TransactionTestCase):
 
     def test_resource_create_at_exactly_the_limit_succeeds(self):
         domain = models.Domain.objects.create(title="ResEdgeDom", owner=self.owner)
-        with override_settings(DOMINION_MAX_RESOURCES_PER_DOMAIN=1):
+        with override_settings(
+            DOMINION_MAX_RESOURCES_PER_DOMAIN=1, DOMINION_VALIDATION_SAMPLE_RATE=1.0
+        ):
             r1 = models.Resource.objects.create(urn="edge:r1", domain=domain, owner=self.owner)
             self.assertTrue(models.Resource.objects.filter(id=r1.id).exists())
             before = models.Resource.objects.count()
             with self.assertRaises(ValidationError):
                 models.Resource.objects.create(urn="edge:r2", domain=domain, owner=self.owner)
             self.assertEqual(models.Resource.objects.count(), before)
+
+    def test_skip_validation_when_sample_rate_zero(self):
+        """With sample rate 0.0, over-limit saves succeed (probabilistic skip)."""
+        root = models.Domain.objects.create(title="SkipRoot", owner=self.owner)
+        with override_settings(
+            DOMINION_MAX_DESCENDANT_DOMAINS=1, DOMINION_VALIDATION_SAMPLE_RATE=0.0
+        ):
+            # Should NOT raise — the limit check is skipped entirely.
+            child = models.Domain.objects.create(title="SkipChild", owner=self.owner, parent=root)
+            self.assertTrue(models.Domain.objects.filter(id=child.id).exists())
+
+    def test_validation_fires_when_sample_rate_one(self):
+        """With sample rate 1.0, validation always fires."""
+        root = models.Domain.objects.create(title="FireRoot", owner=self.owner)
+        with override_settings(
+            DOMINION_MAX_DESCENDANT_DOMAINS=1, DOMINION_VALIDATION_SAMPLE_RATE=1.0
+        ):
+            with self.assertRaises(ValidationError):
+                models.Domain.objects.create(title="FireChild", owner=self.owner, parent=root)

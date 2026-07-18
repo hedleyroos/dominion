@@ -56,7 +56,6 @@ from django.core.wsgi import get_wsgi_application  # noqa: E402
 get_wsgi_application()
 
 from django.contrib.auth import get_user_model  # noqa: E402
-from django.db.models import F  # noqa: E402
 
 from dominion.models import (  # noqa: E402
     Domain,
@@ -251,14 +250,8 @@ def setup_domains(num_root: int, user_ids: list[str]) -> tuple[list, list, list]
                 title=f"perf-child-{str(root.id)[:8]}-{j:02d}",
                 parent_id=root.id,
                 root_id=root.id,
-                descendant_count=0,
-                resource_count=0,
             ))
     Domain.objects.bulk_create(children_to_create, ignore_conflicts=True)
-    for root in root_domains:
-        Domain.objects.filter(id=root.id).update(
-            descendant_count=F("descendant_count") + CHILDREN_PER_ROOT
-        )
     child_domains = list(Domain.objects.filter(title__startswith="perf-child-").order_by("title"))
     print(f"  Child domains done in {time.time() - t0:.1f}s.")
 
@@ -273,14 +266,8 @@ def setup_domains(num_root: int, user_ids: list[str]) -> tuple[list, list, list]
                 title=f"perf-grand-{str(child.id)[:8]}-{k:02d}",
                 parent_id=child.id,
                 root_id=root_id,
-                descendant_count=0,
-                resource_count=0,
             ))
     Domain.objects.bulk_create(grand_to_create, ignore_conflicts=True)
-    for root in root_domains:
-        Domain.objects.filter(id=root.id).update(
-            descendant_count=F("descendant_count") + CHILDREN_PER_ROOT * GRANDCHILDREN_PER_CHILD
-        )
     grandchild_domains = list(Domain.objects.filter(title__startswith="perf-grand-").order_by("title"))
     print(f"  Grandchild domains done in {time.time() - t0:.1f}s.")
 
@@ -1072,27 +1059,95 @@ async def run_listing_stress(base_url: str, data: TestData, concurrency: int) ->
 def clear_perf_data() -> None:
     """Delete all perf test data so setup always starts from a clean slate.
 
-    Order matters: delete child objects before parents to satisfy FK PROTECT
-    constraints, and let CASCADE cascades handle the rest.
+    Uses raw SQL deletes to bypass Django's ORM signals for speed.
     """
     print("  Clearing previous perf data...")
     t0 = time.time()
 
-    # Child resources depend on root resources (parent FK PROTECT).
-    Resource.objects.filter(urn__startswith="perf:child:").delete()
-    Resource.objects.filter(urn__startswith="perf:root:").delete()
-    Resource.objects.filter(urn__startswith="perf:mixed:").delete()
+    from django.db import connection
+    cursor = connection.cursor()
 
-    # Roles depend on domains (domain FK PROTECT). Delete them before domains.
-    Role.objects.filter(code__startswith="perf-").delete()
+    # Order: child tables first (FK references), then parents.
 
-    # Domains: grandchildren → children → roots (parent FK PROTECT).
-    Domain.objects.filter(title__startswith="perf-grand-").delete()
-    Domain.objects.filter(title__startswith="perf-child-").delete()
-    Domain.objects.filter(title__startswith="perf-root-").delete()
+    # Resource-level assignments → cascade naturally from resource deletion
+    # but we explicitly clear them first for safety.
+    cursor.execute(
+        "DELETE FROM dominion_userresourcerole WHERE resource_id IN "
+        "(SELECT id FROM dominion_resource WHERE urn LIKE %s)",
+        ["perf:%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_resourcerolepermission WHERE resource_id IN "
+        "(SELECT id FROM dominion_resource WHERE urn LIKE %s)",
+        ["perf:%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_resourcepermission WHERE resource_id IN "
+        "(SELECT id FROM dominion_resource WHERE urn LIKE %s)",
+        ["perf:%"],
+    )
 
-    # Users come last; CASCADE from UDR/URR cleans up remaining role assignments.
-    User.objects.filter(username__startswith="perfuser").delete()
+    # Domain-level assignments referencing perf users or perf domains.
+    cursor.execute(
+        "DELETE FROM dominion_userdomainrole WHERE user_id IN "
+        "(SELECT id FROM dominion_user WHERE username LIKE %s)",
+        ["perfuser%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_userdomainrole WHERE domain_id IN "
+        "(SELECT id FROM dominion_domain WHERE title LIKE %s)",
+        ["perf-%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_domainrolepermission WHERE domain_id IN "
+        "(SELECT id FROM dominion_domain WHERE title LIKE %s)",
+        ["perf-%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_domainpermission WHERE domain_id IN "
+        "(SELECT id FROM dominion_domain WHERE title LIKE %s)",
+        ["perf-%"],
+    )
+
+    # Roles (must precede domains — FK PROTECT).
+    cursor.execute(
+        "DELETE FROM dominion_role WHERE code LIKE %s",
+        ["perf-%"],
+    )
+
+    # Resources (child before parent — self-referential FK).
+    cursor.execute(
+        "DELETE FROM dominion_resource WHERE urn LIKE %s",
+        ["perf:child:%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_resource WHERE urn LIKE %s",
+        ["perf:root:%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_resource WHERE urn LIKE %s",
+        ["perf:mixed:%"],
+    )
+
+    # Domains (grandchild → child → root — parent FK PROTECT).
+    cursor.execute(
+        "DELETE FROM dominion_domain WHERE title LIKE %s",
+        ["perf-grand-%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_domain WHERE title LIKE %s",
+        ["perf-child-%"],
+    )
+    cursor.execute(
+        "DELETE FROM dominion_domain WHERE title LIKE %s",
+        ["perf-root-%"],
+    )
+
+    # Perf users.
+    cursor.execute(
+        "DELETE FROM dominion_user WHERE username LIKE %s",
+        ["perfuser%"],
+    )
 
     print(f"  Cleared in {time.time() - t0:.1f}s.")
 

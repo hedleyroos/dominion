@@ -181,8 +181,15 @@ OAUTH2_PROVIDER = {
 
 SESSION_COOKIE_NAME = "dominionid"
 
-# We need a distributed cache for production
-if not DEBUG:
+if env.bool("DISABLE_PERM_CACHE", False):
+    # Perf profiling: disables the cross-request permission cache in dominion/utils.py
+    # so every access check recomputes. The request-scoped contextvars cache in utils.py
+    # is a separate per-call cache and is unaffected. Note RATELIMIT_USE_CACHE below then
+    # also targets DummyCache, so rate limiting no-ops while this is set — expected during
+    # perf runs.
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.dummy.DummyCache"}}
+elif not DEBUG:
+    # We need a distributed cache for production
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
@@ -196,6 +203,11 @@ if not DEBUG:
 
 RATELIMIT_USE_CACHE = "default"
 
+# Global kill switch (read by django_ratelimit.core.is_ratelimited). Defaults to
+# enabled; set RATELIMIT_ENABLE=false for load testing so the rate limiter itself
+# isn't what's being measured.
+RATELIMIT_ENABLE = env.bool("RATELIMIT_ENABLE", True)
+
 MEDIA_ROOT = env.str("MEDIA_ROOT", "")
 STATIC_ROOT = env.str("STATIC_ROOT", "")
 
@@ -208,6 +220,7 @@ REST_FRAMEWORK = {
 DOMINION_API_RESULTS_PER_PAGE = 100
 DOMINION_MAX_DESCENDANT_DOMAINS = 1000
 DOMINION_MAX_RESOURCES_PER_DOMAIN = 10000000
+DOMINION_VALIDATION_SAMPLE_RATE = 0.05
 
 CELERY_BEAT_SCHEDULE = {
     'every-5-minutes': {

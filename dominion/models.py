@@ -1,10 +1,10 @@
+import random
 import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
-from django.db.models import F
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
@@ -90,12 +90,6 @@ class Domain(models.Model):
     # Computed fields
     root = models.ForeignKey("Domain", null=True, blank=True, editable=False, on_delete=models.PROTECT, related_name="domain_root")
 
-    # Counter caches — maintained via post_save / post_delete signals.
-    # descendant_count: total domains that share this domain as their root (including self).
-    # resource_count: total resources whose domain FK points to this domain.
-    descendant_count = models.PositiveIntegerField(default=0, editable=False)
-    resource_count = models.PositiveIntegerField(default=0, editable=False)
-
     objects = DomainManager()
 
     def __str__(self):
@@ -106,9 +100,7 @@ class Domain(models.Model):
         while root.parent is not None:
             root = root.parent
         self.root = root
-        # Validate before the insert so an invalid row is never written. clean()
-        # accounts for the row-to-be via _state.adding, so it does not need the
-        # counter-cache signals to have fired yet.
+        # Validate before the insert so an invalid row is never written.
         self.clean()
         super().save(*args, **kwargs)
 
@@ -122,18 +114,16 @@ class Domain(models.Model):
                     raise ValidationError({"title": "The title is already in use by an ancestor."})
                 parent = parent.parent
 
-        # Check the descendant counter on the root domain. The counter reflects the
-        # currently-persisted descendants; when creating a new domain we count the
-        # row about to be inserted with +1. Skip on in-memory objects whose root has
-        # not been computed yet (the API layer's pre-save full_clean()).
-        if self.root_id is not None:
+        # Probabilistic descendant limit check. Only a fraction of saves trigger a
+        # count query; the rest skip the check entirely. This bounds the overhead
+        # while still catching runaway domain creation within a few saves.
+        if self.root_id is not None and random.random() < settings.DOMINION_VALIDATION_SAMPLE_RATE:
             limit = settings.DOMINION_MAX_DESCENDANT_DOMAINS
             if self._state.adding and self.root_id == self.id:
-                # Creating the root itself: its row isn't inserted yet, so it can't
-                # be read back — it will be the sole descendant.
+                # Creating the root itself: its row isn't inserted yet.
                 effective_count = 1
             else:
-                stored = Domain.objects.values_list("descendant_count", flat=True).get(id=self.root_id)
+                stored = Domain.objects.filter(root_id=self.root_id).count()
                 effective_count = stored + (1 if self._state.adding else 0)
             if effective_count > limit:
                 raise ValidationError("The root domain may not contain more than %s child domains." % limit)
@@ -216,15 +206,13 @@ class Resource(models.Model):
             if self.parent.domain != self.domain:
                 raise ValidationError("Parent domain does not match instance domain.")
 
-        # Check the resource counter on the owning domain. The counter reflects the
-        # currently-persisted resources; when creating a new resource we count the
-        # row about to be inserted with +1. The owning domain always pre-exists (FK),
-        # so the read is safe before this row is saved.
-        limit = settings.DOMINION_MAX_RESOURCES_PER_DOMAIN
-        stored = Domain.objects.values_list("resource_count", flat=True).get(id=self.domain_id)
-        effective_count = stored + (1 if self._state.adding else 0)
-        if effective_count > limit:
-            raise ValidationError("The domain may not contain more than %s resources." % limit)
+        # Probabilistic resource limit check — see Domain.clean() for rationale.
+        if random.random() < settings.DOMINION_VALIDATION_SAMPLE_RATE:
+            limit = settings.DOMINION_MAX_RESOURCES_PER_DOMAIN
+            stored = Resource.objects.filter(domain_id=self.domain_id).count()
+            effective_count = stored + (1 if self._state.adding else 0)
+            if effective_count > limit:
+                raise ValidationError("The domain may not contain more than %s resources." % limit)
 
 
 class DomainRolePermission(models.Model):
@@ -321,50 +309,6 @@ class UserResourceRole(models.Model):
 
     def __str__(self):
         return "%s:%s:%s" % (self.user, self.resource, self.role)
-
-
-# ---------------------------------------------------------------------------
-# Counter-cache signals (P3.3)
-# ---------------------------------------------------------------------------
-# These signals maintain the `descendant_count` and `resource_count` fields on
-# Domain atomically via F() expressions.  The signals fire *inside*
-# Model.save() (before full_clean/clean run), so the counters are already
-# updated when the limit check in clean() reads them.
-
-@receiver(post_save, sender=Domain)
-def _domain_post_save(sender, instance, created, **kwargs):
-    if created:
-        # Increment the root's descendant count.  When this IS the root domain
-        # (root_id == id) the UPDATE targets the just-inserted row, setting
-        # it from 0 → 1 correctly.
-        Domain.objects.filter(id=instance.root_id).update(
-            descendant_count=F("descendant_count") + 1
-        )
-
-
-@receiver(post_delete, sender=Domain)
-def _domain_post_delete(sender, instance, **kwargs):
-    # Decrement the root's counter.  If the root itself was deleted the UPDATE
-    # targets a row that no longer exists and is a safe no-op.
-    if instance.root_id and instance.root_id != instance.id:
-        Domain.objects.filter(id=instance.root_id).update(
-            descendant_count=F("descendant_count") - 1
-        )
-
-
-@receiver(post_save, sender=Resource)
-def _resource_post_save(sender, instance, created, **kwargs):
-    if created:
-        Domain.objects.filter(id=instance.domain_id).update(
-            resource_count=F("resource_count") + 1
-        )
-
-
-@receiver(post_delete, sender=Resource)
-def _resource_post_delete(sender, instance, **kwargs):
-    Domain.objects.filter(id=instance.domain_id).update(
-        resource_count=F("resource_count") - 1
-    )
 
 
 # ---------------------------------------------------------------------------
