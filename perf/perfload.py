@@ -162,20 +162,21 @@ def print_results(name: str, latencies: list[float], statuses: list[int], elapse
     print(f"{'=' * 64}")
     print(f"  Total     : {total:>8,}   RPS    : {rps:>8.1f}")
     print(f"  OK (2xx)  : {ok:>8,}   Errors : {errors:>8,}")
-    p50 = p95 = p99 = p_max = 0.0
+    avg = p50 = p95 = p99 = p_max = 0.0
     if latencies:
+        avg = sum(latencies) / len(latencies)
         p50 = _percentile(latencies, 50)
         p95 = _percentile(latencies, 95)
         p99 = _percentile(latencies, 99)
         p_max = max(latencies)
-        print(f"  Latency ms  p50: {p50:>7.1f}  p95: {p95:>7.1f}  p99: {p99:>7.1f}  max: {p_max:>7.1f}")
+        print(f"  Latency ms  avg: {avg:>7.1f}  p50: {p50:>7.1f}  p95: {p95:>7.1f}  p99: {p99:>7.1f}  max: {p_max:>7.1f}")
     if ERROR_COUNTS:
         print(f"  Error breakdown:")
         for err_key, count in sorted(ERROR_COUNTS.items(), key=lambda x: -x[1])[:10]:
             print(f"    [{count:>6}] {err_key}")
     RESULTS[name] = {
         "total": total, "ok": ok, "errors": errors,
-        "rps": round(rps, 2), "p50": round(p50, 2),
+        "rps": round(rps, 2), "avg": round(avg, 2), "p50": round(p50, 2),
         "p95": round(p95, 2), "p99": round(p99, 2), "max": round(p_max, 2),
     }
     _reset_errors()
@@ -187,15 +188,6 @@ def print_results(name: str, latencies: list[float], statuses: list[int], elapse
 
 def setup_users(num_users: int) -> list[str]:
     """Bulk-create perf test users; return list of user ID strings."""
-    if User.objects.filter(username__startswith="perfuser").exists():
-        existing = list(
-            User.objects.filter(username__startswith="perfuser")
-            .order_by("username")
-            .values_list("id", flat=True)
-        )
-        print(f"  Users already exist ({len(existing):,}) — skipping.")
-        return [str(uid) for uid in existing]
-
     print(f"  Creating {num_users:,} users...")
     t0 = time.time()
     batch = []
@@ -236,13 +228,6 @@ def setup_domains(num_root: int, user_ids: list[str]) -> tuple[list, list, list]
 
     Returns (root_domains, child_domains, grandchild_domains) as ORM objects.
     """
-    if Domain.objects.filter(title__startswith="perf-root-").exists():
-        root_domains = list(Domain.objects.filter(title__startswith="perf-root-").order_by("title"))
-        child_domains = list(Domain.objects.filter(title__startswith="perf-child-").order_by("title"))
-        grandchild_domains = list(Domain.objects.filter(title__startswith="perf-grand-").order_by("title"))
-        print(f"  Domains already exist (roots={len(root_domains):,}, children={len(child_domains):,}, grandchildren={len(grandchild_domains):,}) — skipping.")
-        return root_domains, child_domains, grandchild_domains
-
     num_users = len(user_ids)
 
     print(f"  Creating {num_root:,} root domains (with default permissions)...")
@@ -370,10 +355,6 @@ def setup_additional_user_domain_roles(
 
     Also assign managers and viewers to a subset of child and grandchild domains.
     """
-    if UserDomainRole.objects.filter(user__username__startswith="perfuser").exclude(role__code__in=["owner", "access_checker"]).exists():
-        print("  Additional user domain roles already exist — skipping.")
-        return
-
     print("  Assigning users to domains with varied roles...")
     t0 = time.time()
     role_manager = Role.objects.get(code="manager")
@@ -471,18 +452,6 @@ def setup_resources(
     ~70% are root resources; ~30% are children of root resources.
     Returns (root_resource_ids, child_resource_ids).
     """
-    if Resource.objects.filter(urn__startswith="perf:").exists():
-        root_ids = list(
-            Resource.objects.filter(urn__startswith="perf:", parent__isnull=True)
-            .values_list("id", flat=True)
-        )
-        child_ids = list(
-            Resource.objects.filter(urn__startswith="perf:", parent__isnull=False)
-            .values_list("id", flat=True)
-        )
-        print(f"  Resources already exist (root={len(root_ids):,}, child={len(child_ids):,}) — skipping.")
-        return root_ids, child_ids
-
     all_domains = root_domains + child_domains
     num_domains = len(all_domains)
     num_root_resources = int(num_resources * 0.7)
@@ -550,10 +519,6 @@ def setup_resource_permissions(
 
     Also block inheritance on a small fraction to create diverse code paths.
     """
-    if ResourceRolePermission.objects.filter(resource__urn__startswith="perf:").exists():
-        print("  Resource role permissions already exist — skipping.")
-        return
-
     print("  Setting up resource role permissions...")
     t0 = time.time()
     perm_read = Permission.objects.get(code="read")
@@ -620,10 +585,6 @@ def setup_user_resource_roles(
     One user per resource on every 10th root resource — these are the
     resource-level role holders exercised by the resource access-check scenario.
     """
-    if UserResourceRole.objects.filter(user__username__startswith="perfuser").exists():
-        print("  User resource roles already exist — skipping.")
-        return
-
     print("  Assigning users to resources...")
     t0 = time.time()
     role_owner = Role.objects.get(code="owner")
@@ -1108,9 +1069,39 @@ async def run_listing_stress(base_url: str, data: TestData, concurrency: int) ->
 # Subcommand: setup
 # ---------------------------------------------------------------------------
 
+def clear_perf_data() -> None:
+    """Delete all perf test data so setup always starts from a clean slate.
+
+    Order matters: delete child objects before parents to satisfy FK PROTECT
+    constraints, and let CASCADE cascades handle the rest.
+    """
+    print("  Clearing previous perf data...")
+    t0 = time.time()
+
+    # Child resources depend on root resources (parent FK PROTECT).
+    Resource.objects.filter(urn__startswith="perf:child:").delete()
+    Resource.objects.filter(urn__startswith="perf:root:").delete()
+    Resource.objects.filter(urn__startswith="perf:mixed:").delete()
+
+    # Roles depend on domains (domain FK PROTECT). Delete them before domains.
+    Role.objects.filter(code__startswith="perf-").delete()
+
+    # Domains: grandchildren → children → roots (parent FK PROTECT).
+    Domain.objects.filter(title__startswith="perf-grand-").delete()
+    Domain.objects.filter(title__startswith="perf-child-").delete()
+    Domain.objects.filter(title__startswith="perf-root-").delete()
+
+    # Users come last; CASCADE from UDR/URR cleans up remaining role assignments.
+    User.objects.filter(username__startswith="perfuser").delete()
+
+    print(f"  Cleared in {time.time() - t0:.1f}s.")
+
+
 def cmd_setup(args) -> None:
     print("\n=== SETUP PHASE ===")
     print(f"  Database  : {os.environ['DATABASE_URL']}")
+
+    clear_perf_data()
 
     print("\n[1/7] Users")
     user_ids = setup_users(args.users)

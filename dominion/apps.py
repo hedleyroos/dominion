@@ -1,5 +1,5 @@
 from django.apps import AppConfig
-from django.db.utils import ProgrammingError
+from django.db import Error as DatabaseError
 
 
 class DominionConfig(AppConfig):
@@ -10,8 +10,8 @@ class DominionConfig(AppConfig):
         from dominion import handlers
 
         # Creation may fail on a clean database the first time. It's not a problem,
-        # since subsequent operations will allow the next attempt to succeed.
+        # since subsequent operations will allow the next attempt to succeed
         try:
             create_initial_data()
-        except ProgrammingError:
+        except DatabaseError:
             pass

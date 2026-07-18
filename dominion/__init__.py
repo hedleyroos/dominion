@@ -1,11 +1,15 @@
-from django.db.utils import OperationalError
+import logging
 
 from dominion.conf.celery import app as celery_app  # noqa: F401
 
 __all__ = ("celery_app",)
 
+logger = logging.getLogger("dominion")
+
 
 def create_initial_data():
+    """Create minimum required system roles and permissions.
+    """
     from dominion import models  # noqa
 
     for code, title in (
@@ -15,10 +19,7 @@ def create_initial_data():
         ("owner", "Owner"),
         ("access_checker", "Access checker"),
     ):
-        try:
-            models.Role.objects.get_or_create(code=code, title=title)
-        except OperationalError:
-            pass
+        models.Role.objects.get_or_create(code=code, title=title)
 
     for code, title in (
         ("create", "Create"),
@@ -29,7 +30,4 @@ def create_initial_data():
         ("manage_roles", "Manage roles"),
         ("view", "View as public"),
     ):
-        try:
-            models.Permission.objects.get_or_create(code=code, title=title)
-        except OperationalError:
-            pass
+        models.Permission.objects.get_or_create(code=code, title=title)
